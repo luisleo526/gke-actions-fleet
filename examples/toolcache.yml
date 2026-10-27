@@ -72,10 +72,9 @@ jobs:
               print(oct(mode))
               assert mode == 0o700, oct(mode)
           PY
-          if [[ -n "${DOCKER_HOST:-}" ]]; then
-            test "$(stat -c '%g' /var/run/docker.sock)" = 123
-            docker info >/dev/null
-          fi
+          test -n "${DOCKER_HOST:-}"
+          test "$(stat -c '%g' /var/run/docker.sock)" = 123
+          docker info >/dev/null
           readelf -d "$python_path" | tee "$RUNNER_TEMP/python-dynamic.txt"
           grep RUNPATH "$RUNNER_TEMP/python-dynamic.txt" | grep -F /opt/hostedtoolcache/Python/
           env -i "$python_path" -I -c 'import ssl, sqlite3, pip._vendor; print("ok")'

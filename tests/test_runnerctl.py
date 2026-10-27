@@ -151,11 +151,16 @@ class RunnerTests(unittest.TestCase):
     def test_work_initializer_clears_inherited_setgid_and_preserves_other_volumes(self):
         pod = ctl.scale_values(self.c, "example", "gke-2cpu-4gb-amd64")["template"]["spec"]
         self.assertEqual(pod["securityContext"]["fsGroup"], 123)
+        self.assertEqual(pod["initContainers"][0]["volumeMounts"], [{"name": "work", "mountPath": "/mnt/work"}])
+        docker = next(item for item in pod["initContainers"] if item["name"] == "dind")
+        self.assertIn("--group=123", docker["args"])
+        for container in [pod["containers"][0], docker]:
+            self.assertIn({"name": "dind-sock", "mountPath": "/var/run"}, container["volumeMounts"])
         command = pod["initContainers"][0]["command"][-1]
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             work = base / "job volume"
-            for name in ["", "workspace", "workspace/_temp", "workspace/_temp/inherited", "toolcache", "docker"]:
+            for name in ["", "lost+found"]:
                 path = work / name
                 path.mkdir(parents=True, exist_ok=True)
                 path.chmod(0o2770)
@@ -170,7 +175,7 @@ class RunnerTests(unittest.TestCase):
             (binary / "chown").write_text("#!/bin/sh\nexit 0\n")
             (binary / "chown").chmod(0o755)
             subprocess.run(
-                ["/bin/bash", "-ec", command.replace("/mnt/work", shlex.quote(str(work)))],
+                ["/bin/bash", "-ec", "umask 022; " + command.replace("/mnt/work", shlex.quote(str(work)))],
                 env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"]},
                 check=True,
                 capture_output=True,
