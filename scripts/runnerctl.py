@@ -25,6 +25,7 @@ CHART_HASHES = {
     "gha-runner-scale-set-controller": "248807b8ff55fd1a5cc7bb5250558092a162637cfb875ba041eddeeaa51cd747",
 }
 PREFIX = "gke-gh-runner.io/"
+DEFAULT_WORKSPACE_GIB = 480
 
 
 def require(condition, message):
@@ -110,10 +111,11 @@ def load_config(path):
     keys(
         c,
         ["project_id", "region", "zone", "cluster_name", "admin_cidrs", "targets", "profiles"],
-        ["runner_image", "artifact_registry_repositories"],
+        ["runner_image", "artifact_registry_repositories", "workspace_gib"],
     )
     if "runner_image" in c:
         validate_runner_image(c["runner_image"])
+    integer(c.get("workspace_gib", DEFAULT_WORKSPACE_GIB), 10, 16384, "workspace_gib")
     require(
         isinstance(c["project_id"], str) and re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", c["project_id"]),
         "Invalid GCP project ID",
@@ -136,9 +138,12 @@ def load_config(path):
         keys(
             p,
             ["architecture", "machine_type", "cpu", "memory_gib", "max_runners", "spot", "docker"],
-            ["alternatives", "allow_sudo"],
+            ["alternatives", "allow_sudo", "workspace_gib"],
         )
         require(type(p.get("allow_sudo", True)) is bool, "allow_sudo must be a boolean")
+        integer(
+            p.get("workspace_gib", c.get("workspace_gib", DEFAULT_WORKSPACE_GIB)), 10, 16384, "profile.workspace_gib"
+        )
         validate_machine(profile_name, p, p["machine_type"])
         integer(p["max_runners"], 1, 100, "max_runners")
         alternatives = p.get("alternatives", [])
@@ -248,6 +253,7 @@ def scale_values(c, target_name, profile_name):
     p, target = c["profiles"][profile_name], c["targets"][target_name]
     runner_image = target.get("runner_image", c.get("runner_image", RUNNER_IMAGE))
     allow_sudo = p.get("allow_sudo", True)
+    workspace_gib = p.get("workspace_gib", c.get("workspace_gib", DEFAULT_WORKSPACE_GIB))
     runner = {
         "name": "runner",
         "image": runner_image,
@@ -262,6 +268,7 @@ def scale_values(c, target_name, profile_name):
         "env": [
             {"name": "RUNNER_PROFILE", "value": profile_name},
             {"name": "RUNNER_ARCHITECTURE", "value": p["architecture"]},
+            {"name": "RUNNER_WORKSPACE_GIB", "value": str(workspace_gib)},
             {"name": "RUNNER_TOOL_CACHE", "value": "/home/runner/_work/_tool"},
             {"name": "AGENT_TOOLSDIRECTORY", "value": "/home/runner/_work/_tool"},
             {"name": "TMPDIR", "value": "/home/runner/_work/_temp"},
@@ -283,7 +290,7 @@ def scale_values(c, target_name, profile_name):
         "volumeMounts": [{"name": "work", "mountPath": "/home/runner/_work", "subPath": "workspace"}],
     }
     # Reserve writable-layer space without imposing a 2 GiB package-install cap.
-    # The node OS disk still bounds this storage; workspace/Docker use their 80 GiB PVC.
+    # The node OS disk bounds this storage; workspace/Docker use the configured PVC.
     del runner["resources"]["limits"]["ephemeral-storage"]
     if not allow_sudo:
         runner["securityContext"]["capabilities"] = {"drop": ["ALL"]}
@@ -332,7 +339,7 @@ def scale_values(c, target_name, profile_name):
                         "spec": {
                             "accessModes": ["ReadWriteOnce"],
                             "storageClassName": "runner-work",
-                            "resources": {"requests": {"storage": "80Gi"}},
+                            "resources": {"requests": {"storage": f"{workspace_gib}Gi"}},
                         },
                     }
                 },
@@ -477,6 +484,7 @@ def storage_class(c):
         "provisioner": "pd.csi.storage.gke.io",
         "volumeBindingMode": "WaitForFirstConsumer",
         "reclaimPolicy": "Delete",
+        "allowVolumeExpansion": True,
         "parameters": {
             "type": "pd-balanced",
             "csi.storage.k8s.io/fstype": "ext4",

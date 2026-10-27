@@ -32,11 +32,13 @@ class RunnerTests(unittest.TestCase):
         )
 
     def test_capacity_limits_are_independent_for_each_architecture(self):
-        limits = {2: 16, 4: 16, 8: 8, 16: 8, 32: 8}
         for architecture in ["amd64", "arm64"]:
+            limits = (
+                {2: 16, 4: 16, 8: 16, 16: 16, 32: 16} if architecture == "amd64" else {2: 16, 4: 16, 8: 8, 16: 8, 32: 8}
+            )
             profiles = [p for p in self.c["profiles"].values() if p["architecture"] == architecture]
             self.assertEqual({p["cpu"]: p["max_runners"] for p in profiles}, limits)
-            self.assertEqual(sum(p["max_runners"] for p in profiles), 56)
+            self.assertEqual(sum(p["max_runners"] for p in profiles), 80 if architecture == "amd64" else 56)
 
     def test_machine_variants_share_one_profile_capacity_budget(self):
         pools = ctl.node_pool_variants(self.c)
@@ -103,15 +105,31 @@ class RunnerTests(unittest.TestCase):
                     {},
                 )
 
-    def test_all_job_data_share_one_disposable_80gib_disk(self):
+    def test_all_job_data_share_one_disposable_configured_disk(self):
         pod = ctl.scale_values(self.c, "example", "gke-2cpu-4gb-arm64")["template"]["spec"]
         volume = pod["volumes"][0]["ephemeral"]["volumeClaimTemplate"]["spec"]
-        self.assertEqual(volume["resources"]["requests"]["storage"], "80Gi")
+        self.assertEqual(volume["resources"]["requests"]["storage"], "480Gi")
         self.assertEqual(volume["storageClassName"], "runner-work")
         docker = next(c for c in pod["initContainers"] if c["name"] == "dind")
         self.assertEqual(next(m for m in docker["volumeMounts"] if m["mountPath"] == "/var/lib/docker")["name"], "work")
         self.assertEqual(ctl.storage_class(self.c)["reclaimPolicy"], "Delete")
         self.assertEqual(ctl.storage_class(self.c)["volumeBindingMode"], "WaitForFirstConsumer")
+        self.assertTrue(ctl.storage_class(self.c)["allowVolumeExpansion"])
+
+    def test_workspace_size_can_be_overridden_globally_and_per_profile(self):
+        self.c["workspace_gib"] = 240
+        self.c["profiles"]["gke-2cpu-4gb-amd64"]["workspace_gib"] = 640
+        for profile, expected in [("gke-2cpu-4gb-amd64", "640Gi"), ("gke-2cpu-4gb-arm64", "240Gi")]:
+            pod = ctl.scale_values(self.c, "example", profile)["template"]["spec"]
+            self.assertEqual(
+                pod["volumes"][0]["ephemeral"]["volumeClaimTemplate"]["spec"]["resources"]["requests"]["storage"],
+                expected,
+            )
+
+    def test_workspace_size_rejects_invalid_capacity(self):
+        for value in [0, -1, True, "480", 16385]:
+            with self.subTest(value=value):
+                self.config_error(lambda c: c.update(workspace_gib=value))
 
     def test_no_docker_profile_has_no_privileged_sidecar(self):
         self.c["profiles"]["gke-2cpu-4gb-arm64"]["docker"] = False

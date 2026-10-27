@@ -2,19 +2,19 @@
 
 在**同一個 GKE Standard cluster** 執行不同尺寸、AMD64／ARM64 的 GitHub Actions runners。使用 GitHub 官方 Actions Runner Controller（ARC），透過具名 scale sets 接工作，runner pools 從 0 按需擴容，工作完成後縮回 0。MIT license，可獨立部署，不依賴特定公司的 repo。
 
-One GKE cluster, named GitHub Actions runner sizes, native AMD64/ARM64, disposable 80 GiB job disks, and scale-to-zero worker pools.
+One GKE cluster, named GitHub Actions runner sizes, native AMD64/ARM64, disposable 480 GiB job disks, and scale-to-zero worker pools.
 
 ## Runner 規格
 
 每個規格各有 AMD64、ARM64 版本。名稱可在 `profiles` 中任意修改。
 
-| vCPU | RAM | AMD64 `runs-on` | ARM64 `runs-on` | 每架構並行上限 | 每個 job 工作磁碟 |
+| vCPU | RAM | AMD64 `runs-on` | ARM64 `runs-on` | AMD64 / ARM64 並行上限 | 每個 job 工作磁碟 |
 |---:|---:|---|---|---:|---:|
-| 2 | 4 GiB | `gke-2cpu-4gb-amd64` | `gke-2cpu-4gb-arm64` | 16 | 80 GiB |
-| 4 | 8 GiB | `gke-4cpu-8gb-amd64` | `gke-4cpu-8gb-arm64` | 16 | 80 GiB |
-| 8 | 16 GiB | `gke-8cpu-16gb-amd64` | `gke-8cpu-16gb-arm64` | 8 | 80 GiB |
-| 16 | 32 GiB | `gke-16cpu-32gb-amd64` | `gke-16cpu-32gb-arm64` | 8 | 80 GiB |
-| 32 | 64 GiB | `gke-32cpu-64gb-amd64` | `gke-32cpu-64gb-arm64` | 8 | 80 GiB |
+| 2 | 4 GiB | `gke-2cpu-4gb-amd64` | `gke-2cpu-4gb-arm64` | 16 / 16 | 480 GiB |
+| 4 | 8 GiB | `gke-4cpu-8gb-amd64` | `gke-4cpu-8gb-arm64` | 16 / 16 | 480 GiB |
+| 8 | 16 GiB | `gke-8cpu-16gb-amd64` | `gke-8cpu-16gb-arm64` | 16 / 8 | 480 GiB |
+| 16 | 32 GiB | `gke-16cpu-32gb-amd64` | `gke-16cpu-32gb-arm64` | 16 / 8 | 480 GiB |
+| 32 | 64 GiB | `gke-32cpu-64gb-amd64` | `gke-32cpu-64gb-arm64` | 16 / 8 | 480 GiB |
 
 CPU/RAM 是 runner 容器的 requests 與 limits，單位為 vCPU/GiB；CPU 是 quota，並非固定實體核心。啟用 Docker 時，DinD 的 CPU／RAM limit 也跟隨同一規格，不會固定卡在 2 GiB；其基本 requests 為 250m CPU／512 MiB。Runner 與 DinD 共用同一台 VM 的實體容量，兩者不是各自獨立的一整台機器；同時執行重型 host 與 Docker 工作時，需一起評估總記憶體。Docker job／service containers 也可透過 `--cpus`／`--memory` 或 job container `options` 進一步限制。
 
@@ -28,7 +28,7 @@ flowchart LR
       ARC --> B[ARM64 node pools / 5 sizes]
       A --> P[One ephemeral runner pod per job]
       B --> P
-      P --> D[80 GiB disposable workspace + Docker disk]
+      P --> D[480 GiB disposable workspace + Docker disk]
     end
     P -->|job ends| GC[Delete pod + PVC + underlying work disk]
     GC --> CA[GKE autoscaler removes idle runner VMs]
@@ -37,10 +37,31 @@ flowchart LR
 - 一個常駐 system node 執行 ARC controller、listeners；10 種 runner 規格使用多個 node pools，各自 min=0。
 - Job 排隊 → ARC 建立 runner pod → GKE 因 pending pod 建立對應機型／架構的 VM。
 - 每個 runner 只處理一個 job；同一節點同時最多一個 runner，跨 namespace 亦同。
-- 每個 job 配置獨立的 80 GiB PD Balanced 磁碟，workspace 與 Docker data 共用；generic ephemeral PVC 隨 pod 刪除，StorageClass 的 `reclaimPolicy: Delete` 再刪除底層磁碟。
-- Runner VM 的 **30 GB OS boot disk 另外計費**，隨 GKE 刪除 VM 清除；system node 使用 50 GB boot disk。80 GiB 工作磁碟不含 OS，格式化後可用空間略少。
+- 每個 job 配置獨立的 480 GiB PD Balanced 磁碟，workspace 與 Docker data 共用；generic ephemeral PVC 隨 pod 刪除，StorageClass 的 `reclaimPolicy: Delete` 再刪除底層磁碟。
+- Runner VM 的 **30 GB OS boot disk 另外計費**，隨 GKE 刪除 VM 清除；system node 使用 50 GB boot disk。480 GiB 工作磁碟不含 OS，格式化後可用空間略少。
 - **縮容與磁碟刪除是非同步的**。GKE 可能在數分鐘後刪除空閒 VM；這段時間可被下一個全新 runner pod 使用。沒有停止後保留的工作 VM／工作磁碟，也不保留跨 job 的 workspace。
 - 持續有工作時節點可持續存在；只有閒置的 runner pools 歸零。GKE control plane、system node、Cloud NAT、日誌仍有基本費用。
+
+## 工作磁碟容量與費用
+
+預設每個 job 使用 **480 GiB PD Balanced**，workspace、工具快取與 Docker data 共用。全域 `workspace_gib` 可修改預設值，單一 `profiles.NAME.workspace_gib` 可再覆寫；接受 10–16384 的整數 GiB。調整設定後重新 render/install，新的 runner pod 使用新容量，`runs-on` 名稱不必改動。名稱尾綴本身不會動態增加磁碟。
+
+```json
+{
+  "workspace_gib": 480,
+  "profiles": {
+    "gke-8cpu-16gb-amd64": {
+      "workspace_gib": 640
+    }
+  }
+}
+```
+
+以上為既有設定的局部修改示意，profile 仍需保留 CPU、RAM、機型等必要欄位。Runner 提供 `RUNNER_WORKSPACE_GIB` 環境變數供工作讀取配置容量。
+
+以 [GCP PD Balanced 官方價格](https://cloud.google.com/compute/disks-image-pricing) US$0.000136986/GiB-hour 估算，480 GiB 約 **US$0.06575/磁碟小時**；相較 80 GiB 增加約 **US$0.05479/小時**，相較 240 GiB 增加約 **US$0.03288/小時**。例如累計 100 個磁碟小時，80→480 GiB 約增加 US$5.48。費率依地區與帳單調整；費用包含磁碟建立到刪除的期間，不只 job 執行時間。
+
+StorageClass 允許擴容。更新 template 不會修改既有 PVC；執行中的 managed PVC 可由管理員另行線上擴容，不需刪除工作。容量只能增加，縮小設定只影響之後建立的 runner。節點 OS boot disk 容量獨立，變更工作磁碟不會增加 `/` 的容量。
 
 ## 快速部署
 
@@ -53,7 +74,7 @@ make setup
 
 編輯 `config.json`：填入 project、region、zone、實際管理者出口 IP 的 CIDR，以及 GitHub organization URL。範例的 `203.0.113.10/32` 是文件用位址，**必須更換**。預設 `us-central1-a` 同時提供 N2、T2A；更換區域前確認兩種機型可用性與 quota。保留需要的 profiles，可調整名稱、機型、Docker 開關與併發上限。
 
-`max_runners` 是該 GitHub target 的 scale set 上限，也是 **同一規格／架構所有 node pools 的合計容量預算**。多個 targets 競爭同一 pool；AMD64 與 ARM64 使用獨立 pools，不共用上限。兩種架構各自依 CPU 2／4／8／16／32 配置上限 **16／16／8／8／8**，各 56 台、合計最多 112 台 runner VM；不是預先建立 112 台。每個 pool 最小節點數仍為 0。控制服務使用一台 `e2-standard-4`，為兩個 targets 共 20 個 listeners 留有餘裕。
+`max_runners` 是該 GitHub target 的 scale set 上限，也是 **同一規格／架構所有 node pools 的合計容量預算**。多個 targets 競爭同一 pool；AMD64 與 ARM64 使用獨立 pools，不共用上限。依 CPU 2／4／8／16／32，AMD64 上限為 **16／16／16／16／16**（80 台），ARM64 為 **16／16／8／8／8**（56 台），合計最多 136 台 runner VM；只在有工作時建立。每個 pool 最小節點數仍為 0。控制服務使用一台 `e2-standard-4`，部署多個 targets 時需依 listeners 數量檢查 system node 容量。
 
 ```sh
 gcloud auth application-default login
@@ -155,7 +176,7 @@ env:
 
 Repository secret 仍可用 `${{ secrets.NAME }}`；environment 的 secrets、variables、approval 與 branch rules 在該 job 上正常生效。另一個 job 的 environment 不會自動套用到 GKE job。GitHub 對 fork／Dependabot secrets 的限制仍適用；PR 入口保留前述成員驗證及受信任 workflow 限制。
 
-預設 `allow_sudo: true`，可在 ephemeral runner container 內執行 `sudo apt-get`；設為 `false` 可停用提權。Runner 可寫層不再有固定 2 GiB 上限，實際空間仍受節點 OS 磁碟限制；80 GiB workspace／Docker disk 仍依 job 自動刪除。這些能力不需要把 operator ADC、runner 管理 App key 或 Kubernetes service-account token 交給 job。完整行為與 VM 層級界線見 [compatibility.md](docs/compatibility.md)。
+預設 `allow_sudo: true`，可在 ephemeral runner container 內執行 `sudo apt-get`；設為 `false` 可停用提權。Runner 可寫層不再有固定 2 GiB 上限，實際空間仍受節點 OS 磁碟限制；480 GiB workspace／Docker disk 仍依 job 自動刪除。這些能力不需要把 operator ADC、runner 管理 App key 或 Kubernetes service-account token 交給 job。完整行為與 VM 層級界線見 [compatibility.md](docs/compatibility.md)。
 
 ## 同一規格使用多種機型
 
@@ -187,7 +208,7 @@ make charts
 
 本機測試驗證規格、架構匹配、資源餘裕、工作磁碟生命週期、隔離與清理判定。OpenTofu mock-provider 測試不建立雲端資源；chart 測試使用實際 ARC 0.15.1 charts，在 Kubernetes 1.32／1.35 模板條件下 render 全部 10 種規格並驗證 ARC CRD schema。這些檢查**不代表真實 GKE／GitHub E2E 已通過**。
 
-導入後將 [examples/smoke.yml](examples/smoke.yml) 放進獲授權 repo 的 `.github/workflows/`，分別執行五種 size。每次驗證兩種架構、重複兩次、CPU/RAM cgroup limits、80 GiB disk、新工作區、Docker 與 Redis service container。等所有測試 job 結束後：
+導入後將 [examples/smoke.yml](examples/smoke.yml) 放進獲授權 repo 的 `.github/workflows/`，分別執行五種 size。每次驗證兩種架構、重複兩次、CPU/RAM cgroup limits、480 GiB disk、新工作區、Docker 與 Redis service container。等所有測試 job 結束後：
 
 ```sh
 .venv/bin/python scripts/runnerctl.py wait-idle --timeout 1800

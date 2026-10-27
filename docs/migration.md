@@ -39,7 +39,7 @@ Publish to a registry the nodes can pull from, such as a public GHCR package. Se
 
 Runner steps start as a non-root user with passwordless sudo enabled by default (`allow_sudo: true`). Existing `sudo apt-get ...` and Playwright `install --with-deps` steps can run inside the ephemeral container. Preinstall common/large dependencies in the image when useful for reproducibility and startup time. Profiles configured with `allow_sudo: false` require dependencies to be preinstalled. Use `setup-node`/`setup-python` for explicit runtime versions. Add language/runtime-specific tools required by each repo; the baseline is not a complete hosted-runner replacement. See [compatibility.md](compatibility.md) for repository secrets, job environments and the container/host boundary.
 
-Workspace plus Docker images/build layers have **80 GiB total per job**. Large multi-platform builds must fit that budget; release flows that need more space must split jobs or export intermediate artifacts. Package caches and compiler caches must use explicit artifact/cache services; no local disk persists between jobs. Avoid storing confidential data in caches accessible to untrusted branches.
+Workspace plus Docker images/build layers have **480 GiB total per job**. Large multi-platform builds must fit that budget; increase global or per-profile `workspace_gib` for release flows that need more space, then reinstall the scale sets. Package caches and compiler caches must use explicit artifact/cache services; no local disk persists between jobs. Avoid storing confidential data in caches accessible to untrusted branches.
 
 ## Compatibility changes
 
