@@ -4,7 +4,7 @@ Local validation completed on 2026-10-27:
 
 | Check | Result | Scope |
 |---|---|---|
-| Python contract tests | 40 passed | Sizes, architecture/machine pairing, resource headroom, credential-free rendering, isolated scheduling, 80 GiB ephemeral storage, VM/disk cleanup predicates |
+| Python contract tests | 42 passed | Sizes, architecture/machine pairing, resource headroom, credential-free rendering, isolated scheduling, configurable 480 GiB ephemeral storage, VM/disk cleanup predicates |
 | Ruff lint and format | Passed | Scripts and tests, including the actual inline membership gate executed with mocked API outcomes |
 | OpenTofu fmt / validate | Passed | Google provider 7.46.2, OpenTofu 1.12.6 |
 | OpenTofu mock-provider plan | 2 passed | One cluster, mixed architecture pools, zero minimums, system pool, private nodes, taints and Workload Identity |
@@ -15,7 +15,7 @@ Local validation completed on 2026-10-27:
 | GCP infrastructure apply | Applied and read back | One GKE 1.36.4 cluster, 20 worker pools, one system pool, two GitHub organizations |
 | Live GitHub/GKE execution | 36 jobs passed across 10 workflow runs | All 10 profiles, a second organization, representative alternative machine/zone pools, native toolchain image builds, and a final native Docker test committing 3 GiB on both architectures |
 | Idle cleanup | Passed | Zero runner nodes/VMs, work PVCs/PVs/disks, ephemeral runner resources and both groups’ GitHub runner registrations; only the system node/boot disk remains |
-| Full configured concurrency | Not established | The 112-job configuration was not tested at full load; confirm project-specific regional quotas and available machine capacity |
+| Full configured concurrency | Not established | The 136-job configuration was not tested at full load; confirm project-specific regional quotas and available machine capacity |
 
 Reproduce static checks with `make setup`, `make test`, and `make charts`. Helm schemas validate ARC resource structure, not all runtime Kubernetes/GKE behavior. The mock plan makes no provider API calls and does not prove regional machine availability, quotas, scheduling from zero, disk provisioning/deletion or GitHub registration. The optional image has passed native builds and tool checks on both platforms; repository-specific runtime and browser dependencies still need migration canaries.
 

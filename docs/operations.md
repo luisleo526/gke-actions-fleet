@@ -22,7 +22,7 @@ Each profile creates a primary pool and optional alternative machine/zone pools 
 
 VM startup, image pulls and disk provisioning add cold-start latency. Autoscaler scale-down and CSI garbage collection are asynchronous and cannot guarantee immediate billing cessation at job completion. The default is on-demand; idle runner VMs and work disks disappear, while GKE/system/NAT/logging costs remain. Autoscaling is not a billing budget. Configure quotas and GCP budget alerts independently, size NAT ports for outbound-heavy builds, and choose `max_runners` based on actual VM capacity/cost.
 
-One 80 GiB disk is created per runner pod, even if that pod never gets a job. Failed/canceled jobs must still result in pod deletion for Kubernetes GC to delete the claim and CSI disk. Data is not securely overwritten by this project; GCP disk deletion and provider storage guarantees apply. Job caches/artifacts uploaded elsewhere have their own retention policies.
+One 480 GiB disk is created per runner pod, even if that pod never gets a job. Failed/canceled jobs must still result in pod deletion for Kubernetes GC to delete the claim and CSI disk. Data is not securely overwritten by this project; GCP disk deletion and provider storage guarantees apply. Job caches/artifacts uploaded elsewhere have their own retention policies.
 
 ## Troubleshooting
 

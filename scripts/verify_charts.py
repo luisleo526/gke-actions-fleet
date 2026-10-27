@@ -74,7 +74,7 @@ def verify(c, out):
                 )
                 ctl.require(
                     pod["volumes"][0]["ephemeral"]["volumeClaimTemplate"]["spec"]["resources"]["requests"]["storage"]
-                    == "80Gi",
+                    == f"{profile.get('workspace_gib', c.get('workspace_gib', ctl.DEFAULT_WORKSPACE_GIB))}Gi",
                     "Work volume lost",
                 )
                 if profile["docker"]:

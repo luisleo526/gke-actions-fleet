@@ -48,8 +48,9 @@ jobs:
           test "$((quota / period))" = "$expected_cpu"
           test "$(cat /sys/fs/cgroup/memory.max)" = "$RUNNER_MEMORY_LIMIT"
           disk_bytes=$(df -B1 --output=size /home/runner/_work | tail -n 1 | tr -d ' ')
-          test "$disk_bytes" -gt "$((75 * 1024 * 1024 * 1024))"
-          test "$disk_bytes" -le "$((80 * 1024 * 1024 * 1024))"
+          expected_disk_bytes=$((RUNNER_WORKSPACE_GIB * 1024 * 1024 * 1024))
+          test "$disk_bytes" -gt "$((expected_disk_bytes * 93 / 100))"
+          test "$disk_bytes" -le "$expected_disk_bytes"
           test ! -e /home/runner/_work/.previous-job
           printf '%s\n' "$RUNNER_POD" > /home/runner/_work/.previous-job
           test "$(docker run --rm alpine:3.22 uname -m)" = "$actual"

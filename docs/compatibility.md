@@ -12,7 +12,7 @@ who may submit work, not which repository secrets a permitted job may use.
 | `GITHUB_TOKEN` | The job's `permissions:` control its repository access; the fleet does not substitute an operator token |
 | OIDC | Set `id-token: write`; separately configure the target cloud's federation policy |
 | Artifacts and Actions cache | Standard upload/download/cache actions use GitHub's services; local job storage remains disposable |
-| Docker builds, job containers and service containers | Linux runners use a per-job DinD daemon on the 80 GiB job disk; images/actions must support the selected CPU architecture |
+| Docker builds, job containers and service containers | Linux runners use a per-job DinD daemon on the 480 GiB job disk; images/actions must support the selected CPU architecture |
 | Reusable workflows | Declare required secrets or use `secrets: inherit` from a trusted caller; environment secrets belong to jobs declaring that environment |
 | `sudo` / package installation | Enabled inside the ephemeral runner container by default, using the supported image's passwordless sudo configuration |
 
@@ -49,7 +49,7 @@ multi-tenant isolation boundary, particularly while privileged DinD is enabled.
 
 The runner writable layer reserves 2 GiB for scheduling but has no fixed 2 GiB
 limit. Its actual capacity is bounded by the node's OS disk and kubelet eviction
-thresholds. The separate 80 GiB PVC holds workspace, the setup-action tool cache,
+thresholds. The separate 480 GiB PVC holds workspace, the setup-action tool cache,
 temporary job files and Docker data; use those paths for large job outputs/caches.
 Every runner is single-job and its files/package installations disappear after
 cleanup. Preinstall common packages in an immutable custom image when useful for
