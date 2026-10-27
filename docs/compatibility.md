@@ -86,3 +86,11 @@ Run [the tool-cache regression workflow](../examples/toolcache.yml) on AMD64 and
 ARM64. It checks Python 3.11/3.12 RUNPATH, the loaded libpython mapping, isolated
 pip imports and clean-environment child processes. Template updates apply to new
 runner pods; do not interrupt busy pods to replace their mounts.
+
+The work-volume initializer clears setgid on directories after kubelet applies
+`fsGroup`. Workspace, `_temp` and tool-cache roots remain runner-owned `1001:123`
+with mode `0770`; newly created `mkdir(0700)` directories retain exactly `0700`
+instead of inheriting `2700`. Pod `fsGroup: 123` and DinD's `--group=123` remain
+in place for the separate Docker socket/externals volumes. The regression
+workflow includes a GitHub-hosted directory-permission baseline and checks the
+native pods' directory modes plus Docker socket access.

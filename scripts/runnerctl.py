@@ -326,7 +326,7 @@ def scale_values(c, target_name, profile_name):
                 "command": [
                     "/bin/bash",
                     "-ec",
-                    "mkdir -p /mnt/work/toolcache /mnt/work/workspace/_temp /mnt/work/docker; chown -R 1001:123 /mnt/work/workspace /mnt/work/toolcache; chmod 0770 /mnt/work/workspace /mnt/work/toolcache",
+                    "mkdir -p /mnt/work/toolcache /mnt/work/workspace/_temp /mnt/work/docker; chown -R 1001:123 /mnt/work/workspace /mnt/work/toolcache; chmod 0770 /mnt/work/workspace /mnt/work/workspace/_temp /mnt/work/toolcache; find /mnt/work -type d -perm -2000 -exec chmod g-s {} +",
                 ],
                 "securityContext": {"runAsUser": 0},
                 "resources": resources("100m", "128Mi", "1Gi"),
