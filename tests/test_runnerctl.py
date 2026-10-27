@@ -126,6 +126,24 @@ class RunnerTests(unittest.TestCase):
                 expected,
             )
 
+    def test_standard_tool_cache_uses_the_job_disk_in_runner_and_docker(self):
+        for name in self.c["profiles"]:
+            with self.subTest(profile=name):
+                pod = ctl.scale_values(self.c, "example", name)["template"]["spec"]
+                runner = pod["containers"][0]
+                env = {entry["name"]: entry.get("value") for entry in runner["env"]}
+                self.assertEqual(env["RUNNER_TOOL_CACHE"], "/opt/hostedtoolcache")
+                self.assertEqual(env["AGENT_TOOLSDIRECTORY"], "/opt/hostedtoolcache")
+                docker = next(item for item in pod["initContainers"] if item["name"] == "dind")
+                for container in [runner, docker]:
+                    mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/opt/hostedtoolcache")
+                    self.assertEqual(
+                        mount, {"name": "work", "mountPath": "/opt/hostedtoolcache", "subPath": "toolcache"}
+                    )
+                self.assertEqual(
+                    pod["volumes"][0]["ephemeral"]["volumeClaimTemplate"]["spec"]["storageClassName"], "runner-work"
+                )
+
     def test_workspace_size_rejects_invalid_capacity(self):
         for value in [0, -1, True, "480", 16385]:
             with self.subTest(value=value):

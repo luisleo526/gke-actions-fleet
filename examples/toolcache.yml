@@ -1,0 +1,46 @@
+name: Standard Python tool-cache regression
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [amd64, arm64]
+        python: ['3.11', '3.12']
+    runs-on:
+      group: gke-runners
+      labels: ${{ format('gke-2cpu-4gb-{0}', matrix.architecture) }}
+    timeout-minutes: 10
+    steps:
+      - name: Verify the writable tool cache uses the job disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_TOOL_CACHE" = /opt/hostedtoolcache
+          test "$AGENT_TOOLSDIRECTORY" = /opt/hostedtoolcache
+          test -w /opt/hostedtoolcache
+          test "$(stat -c '%d' /opt/hostedtoolcache)" = "$(stat -c '%d' /home/runner/_work)"
+          df -h /opt/hostedtoolcache /home/runner/_work
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify compiled RUNPATH and an empty child environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v readelf >/dev/null; then
+            sudo apt-get update -q
+            sudo apt-get install -y --no-install-recommends binutils
+          fi
+          python_path=$(command -v python3)
+          case "$python_path" in /opt/hostedtoolcache/Python/*/bin/python3) ;; *) exit 1 ;; esac
+          readelf -d "$python_path" | tee "$RUNNER_TEMP/python-dynamic.txt"
+          grep RUNPATH "$RUNNER_TEMP/python-dynamic.txt" | grep -F /opt/hostedtoolcache/Python/
+          env -i "$python_path" -I -c 'import ssl, sqlite3, pip._vendor; print("ok")'
+          env -i "$python_path" -I -c 'import pathlib, subprocess, sys; maps = [line for line in pathlib.Path("/proc/self/maps").read_text().splitlines() if "libpython" in line]; assert maps and all("/opt/hostedtoolcache/Python/" in line for line in maps), maps; print("\n".join(maps)); subprocess.run([sys.executable, "-I", "-c", "import ssl, sqlite3; print(\"clean child ok\")"], env={}, check=True)'
+          printf 'Profile: %s\nPod: %s\nPython: %s\n' "$RUNNER_PROFILE" "$RUNNER_POD" "$python_path" >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the pod briefly for independent readback
+        run: sleep 45

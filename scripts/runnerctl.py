@@ -269,8 +269,8 @@ def scale_values(c, target_name, profile_name):
             {"name": "RUNNER_PROFILE", "value": profile_name},
             {"name": "RUNNER_ARCHITECTURE", "value": p["architecture"]},
             {"name": "RUNNER_WORKSPACE_GIB", "value": str(workspace_gib)},
-            {"name": "RUNNER_TOOL_CACHE", "value": "/home/runner/_work/_tool"},
-            {"name": "AGENT_TOOLSDIRECTORY", "value": "/home/runner/_work/_tool"},
+            {"name": "RUNNER_TOOL_CACHE", "value": "/opt/hostedtoolcache"},
+            {"name": "AGENT_TOOLSDIRECTORY", "value": "/opt/hostedtoolcache"},
             {"name": "TMPDIR", "value": "/home/runner/_work/_temp"},
             {"name": "RUNNER_POD", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
             {"name": "RUNNER_NODE", "valueFrom": {"fieldRef": {"fieldPath": "spec.nodeName"}}},
@@ -287,7 +287,10 @@ def scale_values(c, target_name, profile_name):
                 },
             },
         ],
-        "volumeMounts": [{"name": "work", "mountPath": "/home/runner/_work", "subPath": "workspace"}],
+        "volumeMounts": [
+            {"name": "work", "mountPath": "/home/runner/_work", "subPath": "workspace"},
+            {"name": "work", "mountPath": "/opt/hostedtoolcache", "subPath": "toolcache"},
+        ],
     }
     # Reserve writable-layer space without imposing a 2 GiB package-install cap.
     # The node OS disk bounds this storage; workspace/Docker use the configured PVC.
@@ -323,7 +326,7 @@ def scale_values(c, target_name, profile_name):
                 "command": [
                     "/bin/bash",
                     "-ec",
-                    "mkdir -p /mnt/work/workspace/_tool /mnt/work/workspace/_temp /mnt/work/docker; chown -R 1001:123 /mnt/work/workspace; chmod 0770 /mnt/work/workspace",
+                    "mkdir -p /mnt/work/toolcache /mnt/work/workspace/_temp /mnt/work/docker; chown -R 1001:123 /mnt/work/workspace /mnt/work/toolcache; chmod 0770 /mnt/work/workspace /mnt/work/toolcache",
                 ],
                 "securityContext": {"runAsUser": 0},
                 "resources": resources("100m", "128Mi", "1Gi"),
@@ -376,6 +379,7 @@ def scale_values(c, target_name, profile_name):
                 "startupProbe": {"exec": {"command": ["docker", "info"]}, "periodSeconds": 5, "failureThreshold": 24},
                 "volumeMounts": [
                     {"name": "work", "mountPath": "/home/runner/_work", "subPath": "workspace"},
+                    {"name": "work", "mountPath": "/opt/hostedtoolcache", "subPath": "toolcache"},
                     {"name": "dind-sock", "mountPath": "/var/run"},
                     {"name": "dind-externals", "mountPath": "/home/runner/externals"},
                     {"name": "work", "mountPath": "/var/lib/docker", "subPath": "docker"},
