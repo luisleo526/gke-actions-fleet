@@ -1,0 +1,29 @@
+name: Validate
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with:
+          version: v4.2.3
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check scripts tests && ruff format --check scripts tests
+      - run: python -m unittest discover -s tests -v
+      - run: tofu -chdir=infra fmt -check -recursive
+      - run: tofu -chdir=infra init -backend=false -input=false -lockfile=readonly
+      - run: tofu -chdir=infra validate && tofu -chdir=infra test
+      - run: python scripts/verify_charts.py

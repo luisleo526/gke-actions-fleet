@@ -1,0 +1,74 @@
+name: Organization member PR on GKE
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions: {}
+jobs:
+  membership:
+    runs-on: ubuntu-24.04
+    environment: gke-pr-admission
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+      head_sha: ${{ steps.check.outputs.head_sha }}
+    steps:
+      # A separate App with Organization Members: read. Never use the runner
+      # management App key here, and never check out PR code in this job.
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: identity
+        with:
+          app-id: ${{ vars.GKE_MEMBERSHIP_APP_ID }}
+          private-key: ${{ secrets.GKE_MEMBERSHIP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-members: read
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        id: check
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          github-token: ${{ steps.identity.outputs.token }}
+          script: |
+            core.setOutput('allowed', 'false');
+            const pr = context.payload.pull_request;
+            if (!pr || pr.draft || pr.base.repo.owner.type !== 'Organization') return;
+            if (pr.base.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) return;
+            const candidates = new Set([pr.user.login, context.actor, process.env.TRIGGERING_ACTOR]);
+            if (candidates.has(undefined) || candidates.has('')) return;
+            for (const username of candidates) {
+              try {
+                const {data} = await github.rest.orgs.getMembershipForUser({org: context.repo.owner, username});
+                if (data.state !== 'active') return;
+              } catch (error) {
+                if (error.status === 404) return;
+                throw error; // Permission failures, API errors and rate limits fail closed.
+              }
+            }
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('allowed', 'true');
+  test:
+    needs: membership
+    if: needs.membership.outputs.allowed == 'true'
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        architecture: [amd64, arm64]
+    runs-on:
+      group: gke-runners
+      labels: ${{ format('gke-8cpu-16gb-{0}', matrix.architecture) }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ needs.membership.outputs.head_sha }}
+          persist-credentials: false
+      - name: Verify the selected runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -m
+          printf 'Profile: %s; CPU quota: %s; memory bytes: %s\n' "$RUNNER_PROFILE" "$RUNNER_CPU_LIMIT" "$RUNNER_MEMORY_LIMIT"
+          # Add the repository's explicit build/test commands here.

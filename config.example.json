@@ -1,0 +1,170 @@
+{
+  "project_id": "your-gcp-project",
+  "region": "us-central1",
+  "zone": "us-central1-a",
+  "cluster_name": "github-runners",
+  "admin_cidrs": [
+    "203.0.113.10/32"
+  ],
+  "targets": {
+    "example": {
+      "github_url": "https://github.com/YOUR-ORG",
+      "github_secret": "github-app",
+      "runner_group": "gke-runners"
+    }
+  },
+  "profiles": {
+    "gke-2cpu-4gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2-custom-4-12288",
+      "cpu": 2,
+      "memory_gib": 4,
+      "max_runners": 16,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "n2d-standard-4",
+          "max_nodes": 8
+        }
+      ]
+    },
+    "gke-4cpu-8gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2-custom-6-16384",
+      "cpu": 4,
+      "memory_gib": 8,
+      "max_runners": 16,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "n2d-standard-8",
+          "max_nodes": 8
+        }
+      ]
+    },
+    "gke-8cpu-16gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2-custom-10-24576",
+      "cpu": 8,
+      "memory_gib": 16,
+      "max_runners": 8,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "n2d-standard-16",
+          "max_nodes": 4
+        }
+      ]
+    },
+    "gke-16cpu-32gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2-custom-18-45056",
+      "cpu": 16,
+      "memory_gib": 32,
+      "max_runners": 8,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "n2d-standard-32",
+          "max_nodes": 4
+        }
+      ]
+    },
+    "gke-32cpu-64gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2-custom-36-77824",
+      "cpu": 32,
+      "memory_gib": 64,
+      "max_runners": 8,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "n2d-standard-48",
+          "max_nodes": 4
+        }
+      ]
+    },
+    "gke-2cpu-4gb-arm64": {
+      "architecture": "arm64",
+      "machine_type": "t2a-standard-4",
+      "cpu": 2,
+      "memory_gib": 4,
+      "max_runners": 16,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "t2a-standard-8",
+          "max_nodes": 8
+        }
+      ]
+    },
+    "gke-4cpu-8gb-arm64": {
+      "architecture": "arm64",
+      "machine_type": "t2a-standard-8",
+      "cpu": 4,
+      "memory_gib": 8,
+      "max_runners": 16,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "t2a-standard-16",
+          "max_nodes": 8
+        }
+      ]
+    },
+    "gke-8cpu-16gb-arm64": {
+      "architecture": "arm64",
+      "machine_type": "t2a-standard-16",
+      "cpu": 8,
+      "memory_gib": 16,
+      "max_runners": 8,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "t2a-standard-32",
+          "max_nodes": 4
+        }
+      ]
+    },
+    "gke-16cpu-32gb-arm64": {
+      "architecture": "arm64",
+      "machine_type": "t2a-standard-32",
+      "cpu": 16,
+      "memory_gib": 32,
+      "max_runners": 8,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "t2a-standard-48",
+          "max_nodes": 4,
+          "zone": "us-central1-b"
+        }
+      ]
+    },
+    "gke-32cpu-64gb-arm64": {
+      "architecture": "arm64",
+      "machine_type": "t2a-standard-48",
+      "cpu": 32,
+      "memory_gib": 64,
+      "max_runners": 8,
+      "spot": false,
+      "docker": true,
+      "alternatives": [
+        {
+          "machine_type": "t2a-standard-48",
+          "max_nodes": 4,
+          "zone": "us-central1-b"
+        }
+      ]
+    }
+  }
+}

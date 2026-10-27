@@ -1,0 +1,61 @@
+name: GKE runner acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      size:
+        type: choice
+        default: 2cpu-4gb
+        options: [2cpu-4gb, 4cpu-8gb, 8cpu-16gb, 16cpu-32gb, 32cpu-64gb]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        architecture: [amd64, arm64]
+        attempt: [1, 2]
+    runs-on: ${{ format('gke-{0}-{1}', inputs.size, matrix.architecture) }}
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7.4
+        ports: [6379/tcp]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - name: Check architecture, limits, disk, Docker, and service networking
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.architecture }}
+          EXPECTED_SIZE: ${{ inputs.size }}
+          REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+        run: |
+          set -euo pipefail
+          actual=$(uname -m)
+          case "$EXPECTED_ARCH" in
+            amd64) test "$actual" = x86_64 ;;
+            arm64) test "$actual" = aarch64 ;;
+          esac
+          test "$RUNNER_PROFILE" = "gke-$EXPECTED_SIZE-$EXPECTED_ARCH"
+          expected_cpu=${EXPECTED_SIZE%%cpu*}
+          expected_memory=${EXPECTED_SIZE#*-}
+          expected_memory=${expected_memory%gb}
+          test "$RUNNER_CPU_LIMIT" = "$expected_cpu"
+          test "$RUNNER_MEMORY_LIMIT" = "$((expected_memory * 1024 * 1024 * 1024))"
+          read -r quota period < /sys/fs/cgroup/cpu.max
+          test "$quota" != max
+          test "$((quota / period))" = "$expected_cpu"
+          test "$(cat /sys/fs/cgroup/memory.max)" = "$RUNNER_MEMORY_LIMIT"
+          disk_bytes=$(df -B1 --output=size /home/runner/_work | tail -n 1 | tr -d ' ')
+          test "$disk_bytes" -gt "$((75 * 1024 * 1024 * 1024))"
+          test "$disk_bytes" -le "$((80 * 1024 * 1024 * 1024))"
+          test ! -e /home/runner/_work/.previous-job
+          printf '%s\n' "$RUNNER_POD" > /home/runner/_work/.previous-job
+          test "$(docker run --rm alpine:3.22 uname -m)" = "$actual"
+          exec 3<>/dev/tcp/127.0.0.1/"$REDIS_PORT"
+          printf 'PING\r\n' >&3
+          read -r reply <&3
+          test "${reply%$'\r'}" = +PONG
+          printf '| Profile | Pod | Node | CPU | RAM bytes | Work disk bytes |\n|---|---|---|---|---|---|\n| %s | %s | %s | %s | %s | %s |\n' \
+            "$RUNNER_PROFILE" "$RUNNER_POD" "$RUNNER_NODE" "$RUNNER_CPU_LIMIT" "$RUNNER_MEMORY_LIMIT" "$disk_bytes" >> "$GITHUB_STEP_SUMMARY"
