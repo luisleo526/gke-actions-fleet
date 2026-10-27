@@ -1,6 +1,10 @@
 import copy
 import importlib.util
 import json
+import os
+import shlex
+import stat
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -143,6 +147,49 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(
                     pod["volumes"][0]["ephemeral"]["volumeClaimTemplate"]["spec"]["storageClassName"], "runner-work"
                 )
+
+    def test_work_initializer_clears_inherited_setgid_and_preserves_other_volumes(self):
+        pod = ctl.scale_values(self.c, "example", "gke-2cpu-4gb-amd64")["template"]["spec"]
+        self.assertEqual(pod["securityContext"]["fsGroup"], 123)
+        self.assertEqual(pod["initContainers"][0]["volumeMounts"], [{"name": "work", "mountPath": "/mnt/work"}])
+        docker = next(item for item in pod["initContainers"] if item["name"] == "dind")
+        self.assertIn("--group=123", docker["args"])
+        for container in [pod["containers"][0], docker]:
+            self.assertIn({"name": "dind-sock", "mountPath": "/var/run"}, container["volumeMounts"])
+        command = pod["initContainers"][0]["command"][-1]
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            work = base / "job volume"
+            for name in ["", "lost+found"]:
+                path = work / name
+                path.mkdir(parents=True, exist_ok=True)
+                path.chmod(0o2770)
+            socket_volume = base / "socket-volume"
+            socket_volume.mkdir(mode=0o2770)
+            socket_volume.chmod(0o2770)
+            before_socket = socket_volume.stat()
+            # Ownership needs root in the real pod. Exercise mkdir/chmod/find on
+            # the real filesystem while replacing only that privileged chown.
+            binary = base / "bin"
+            binary.mkdir()
+            (binary / "chown").write_text("#!/bin/sh\nexit 0\n")
+            (binary / "chown").chmod(0o755)
+            subprocess.run(
+                ["/bin/bash", "-ec", "umask 022; " + command.replace("/mnt/work", shlex.quote(str(work)))],
+                env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"]},
+                check=True,
+                capture_output=True,
+            )
+            for path in [work, *work.rglob("*")]:
+                if path.is_dir():
+                    self.assertFalse(path.stat().st_mode & stat.S_ISGID, str(path))
+            for name in ["workspace", "workspace/_temp", "toolcache"]:
+                self.assertEqual((work / name).stat().st_mode & 0o7777, 0o770)
+            private = work / "workspace/_temp/private"
+            private.mkdir(mode=0o700)
+            self.assertEqual(private.stat().st_mode & 0o7777, 0o700)
+            self.assertEqual(socket_volume.stat().st_mode, before_socket.st_mode)
+            self.assertEqual(socket_volume.stat().st_gid, before_socket.st_gid)
 
     def test_workspace_size_rejects_invalid_capacity(self):
         for value in [0, -1, True, "480", 16385]:

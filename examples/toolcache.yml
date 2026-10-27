@@ -4,6 +4,26 @@ on:
 permissions:
   contents: read
 jobs:
+  hosted-baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Confirm hosted workspace and temp do not inherit setgid
+        shell: bash
+        run: |
+          set -euo pipefail
+          stat -c '%a %u:%g %n' "$RUNNER_TEMP" "$GITHUB_WORKSPACE"
+          python3 - <<'PY'
+          import os, stat, tempfile
+          for path in [os.environ['RUNNER_TEMP'], os.environ['GITHUB_WORKSPACE']]:
+              assert not os.stat(path).st_mode & stat.S_ISGID, path
+          with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as root:
+              path = os.path.join(root, 'private')
+              os.mkdir(path, 0o700)
+              mode = os.stat(path).st_mode & 0o7777
+              print(oct(mode))
+              assert mode == 0o700, oct(mode)
+          PY
   python:
     strategy:
       fail-fast: false
@@ -37,6 +57,24 @@ jobs:
           fi
           python_path=$(command -v python3)
           case "$python_path" in /opt/hostedtoolcache/Python/*/bin/python3) ;; *) exit 1 ;; esac
+          stat -c '%a %u:%g %n' "$TMPDIR" /home/runner/_work /opt/hostedtoolcache
+          "$python_path" - <<'PY'
+          import os, stat, tempfile
+          for path in [os.environ['TMPDIR'], '/home/runner/_work', '/opt/hostedtoolcache']:
+              metadata = os.stat(path)
+              assert metadata.st_mode & 0o7777 == 0o770, (path, oct(metadata.st_mode))
+              assert (metadata.st_uid, metadata.st_gid) == (1001, 123), path
+          with tempfile.TemporaryDirectory() as root:
+              assert root.startswith(os.environ['TMPDIR'] + '/'), root
+              path = os.path.join(root, 'private')
+              os.mkdir(path, 0o700)
+              mode = os.stat(path).st_mode & 0o7777
+              print(oct(mode))
+              assert mode == 0o700, oct(mode)
+          PY
+          test -n "${DOCKER_HOST:-}"
+          test "$(stat -c '%g' /var/run/docker.sock)" = 123
+          docker info >/dev/null
           readelf -d "$python_path" | tee "$RUNNER_TEMP/python-dynamic.txt"
           grep RUNPATH "$RUNNER_TEMP/python-dynamic.txt" | grep -F /opt/hostedtoolcache/Python/
           env -i "$python_path" -I -c 'import ssl, sqlite3, pip._vendor; print("ok")'
