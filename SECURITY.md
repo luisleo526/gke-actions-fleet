@@ -6,6 +6,13 @@ service. The default Docker mode uses a privileged Docker-in-Docker sidecar;
 namespace separation, NetworkPolicy and one concurrent runner per node do not
 provide a VM-grade boundary against malicious job code.
 
+The supported runner starts as a non-root user and permits passwordless sudo
+inside its container by default (`allow_sudo: true`). Operators may disable this
+per profile. This does not grant host systemd/kernel control, a mounted Kubernetes
+API token, or operator cloud credentials. Repository/environment secrets continue
+to follow GitHub's normal job permissions and environment protection rules; see
+[compatibility](docs/compatibility.md).
+
 ## Credentials and publication
 
 - Keep GCP ADC/service-account files and GitHub App private keys outside the

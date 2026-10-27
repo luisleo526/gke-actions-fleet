@@ -34,7 +34,7 @@ One 80 GiB disk is created per runner pod, even if that pod never gets a job. Fa
 | Job disk remains | Pod/PVC/PV finalizers and CSI controller events; inspect labeled GCP disks; do not force-remove finalizers before tracing ownership |
 | VM stays after work | Pending/busy runner pods, system DaemonSets, autoscaler `noScaleDown` reasons; autoscaling is not instantaneous |
 | Node MemoryPressure / image pull failure | Actual allocatable vs requests/DaemonSets, OS disk usage, registry permissions, architecture manifest |
-| `sudo` fails | Install dependencies in the toolchain image; runner privilege escalation is disabled |
+| `sudo` fails | Check `allow_sudo`, the custom image's passwordless sudo configuration and sudo-group membership; the default profile permits sudo inside its runner container |
 | Browser/Docker service fails | Image libraries, native ARM support, service port mapping, container vs shell networking |
 | OIDC/deploy fails | Federated claims/audience/permissions; node credentials are intentionally unavailable |
 

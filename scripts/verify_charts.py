@@ -64,6 +64,12 @@ def verify(c, out):
                 jsonschema.validate(scale, schemas[("AutoscalingRunnerSet", "v1alpha1")])
                 pod = scale["spec"]["template"]["spec"]
                 ctl.require(
+                    scale["spec"]["runnerScaleSetName"] == ctl.scale_set_name(c["targets"][target], name),
+                    "Target scale-set name lost",
+                )
+                expected_image = c["targets"][target].get("runner_image", c.get("runner_image", ctl.RUNNER_IMAGE))
+                ctl.require(pod["containers"][0]["image"] == expected_image, "Target runner image lost")
+                ctl.require(
                     pod["nodeSelector"]["kubernetes.io/arch"] == profile["architecture"], "Architecture selector lost"
                 )
                 ctl.require(
@@ -85,6 +91,9 @@ def verify(c, out):
         "chart_sha256": ctl.CHART_HASHES,
         "validated_scale_sets": count,
         "runner_image": c.get("runner_image", ctl.RUNNER_IMAGE),
+        "target_images": {
+            target: t.get("runner_image", c.get("runner_image", ctl.RUNNER_IMAGE)) for target, t in c["targets"].items()
+        },
         "docker_image": ctl.DOCKER_IMAGE,
         "scope": "offline template and CRD validation; not live GKE/GitHub execution",
     }

@@ -134,6 +134,29 @@ jobs:
 
 外部 PR 可能產生輕量的 GitHub-hosted admission run／記錄，但不會獲得 GKE runner。只寫 `author_association` 或在 PR 可修改的 YAML 中加 `if:`，無法建立完整的存取邊界；必須搭配 runner group 的受信任 workflow allowlist。此範例需額外的 Members: read App 設定，複製檔案本身不會自動修改 organization 權限。
 
+### Repository secrets、GitHub Environments 與完整工作流程功能
+
+Fleet 使用 GitHub 官方 self-hosted runner，支援一般 Actions 的 repository／獲授權 organization secrets、variables、GitHub Environments、`GITHUB_TOKEN` permissions、OIDC、artifacts、cache、reusable workflows、Docker jobs 與 service containers。
+
+使用 [examples/secrets-environment.yml](examples/secrets-environment.yml)，在 GKE job 本身宣告 environment 並明確傳入所需值：
+
+```yaml
+runs-on:
+  group: gke-runners
+  labels: gke-4cpu-8gb-amd64
+environment: staging
+permissions:
+  contents: read
+  id-token: write
+env:
+  API_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+  API_URL: ${{ vars.API_URL }}
+```
+
+Repository secret 仍可用 `${{ secrets.NAME }}`；environment 的 secrets、variables、approval 與 branch rules 在該 job 上正常生效。另一個 job 的 environment 不會自動套用到 GKE job。GitHub 對 fork／Dependabot secrets 的限制仍適用；PR 入口保留前述成員驗證及受信任 workflow 限制。
+
+預設 `allow_sudo: true`，可在 ephemeral runner container 內執行 `sudo apt-get`；設為 `false` 可停用提權。Runner 可寫層不再有固定 2 GiB 上限，實際空間仍受節點 OS 磁碟限制；80 GiB workspace／Docker disk 仍依 job 自動刪除。這些能力不需要把 operator ADC、runner 管理 App key 或 Kubernetes service-account token 交給 job。完整行為與 VM 層級界線見 [compatibility.md](docs/compatibility.md)。
+
 ## 同一規格使用多種機型
 
 `machine_type` 是主要 pool；`alternatives` 可加入相同架構、資源足夠的機型／zone。工作仍使用同一個 `runs-on` 名稱，GKE autoscaler 可從相符的 pools 擴容：
@@ -186,6 +209,8 @@ make charts
 這是**同一信任邊界內的 Linux CI**。Docker 使用 privileged DinD；NetworkPolicy 與 namespace 不提供敵意多租戶 VM 級隔離。公開此專案原始碼不表示應開放 runner 給未審查的 fork PR。macOS、Windows、GPU 與不受信任租戶的隔離另行規劃。預設無工作負載 GCP 權限；部署 jobs 使用 GitHub OIDC／明確的工作負載身分。
 
 固定版本與 image digests 位於 `scripts/runnerctl.py`。更新 runner 需跟上 GitHub 的支援週期；更新 ARC 時同步更新兩個 charts、checksums、CRDs 及驗證紀錄，詳見營運手冊。
+
+同一 organization 的一般／保護工作可使用不同 targets、namespace、App Secret 與 scale-set 名稱；`targets.NAME.runner_image` 支援各 target 使用不同的 digest-pinned image，`scale_set_prefix: "gkp-"` 可將內建 `gke-*` 名稱轉為獨立的 `gkp-*`。私有 Artifact Registry 的 pull 權限可用 `artifact_registry_repositories` 明確設定 repository-level reader。操作與權限邊界見 [targets.md](docs/targets.md)；安裝不會重設 GitHub runner group 的既有 allowlist。
 
 目前已完成與待完成的檢查見 [validation status](docs/validation.md)。
 

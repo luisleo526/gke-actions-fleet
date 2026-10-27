@@ -119,12 +119,109 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([c["name"] for c in pod["initContainers"]], ["init-work"])
         self.assertFalse(any(e["name"] == "DOCKER_HOST" for e in pod["containers"][0]["env"]))
 
+    def test_standard_runner_can_use_sudo_without_host_privileges(self):
+        for name in self.c["profiles"]:
+            with self.subTest(profile=name):
+                pod = ctl.scale_values(self.c, "example", name)["template"]["spec"]
+                runner = pod["containers"][0]
+                self.assertTrue(runner["securityContext"]["runAsNonRoot"])
+                self.assertTrue(runner["securityContext"]["allowPrivilegeEscalation"])
+                self.assertIn(27, pod["securityContext"]["supplementalGroups"])
+                self.assertNotIn("capabilities", runner["securityContext"])
+                self.assertNotIn("privileged", runner["securityContext"])
+                self.assertNotIn("ephemeral-storage", runner["resources"]["limits"])
+                self.assertEqual(runner["resources"]["requests"]["ephemeral-storage"], "2Gi")
+                self.assertFalse(pod["automountServiceAccountToken"])
+                self.assertFalse(pod.get("hostPID", False))
+                self.assertFalse(pod.get("hostNetwork", False))
+
+    def test_sudo_can_be_disabled_for_restricted_profiles(self):
+        self.c["profiles"]["gke-2cpu-4gb-amd64"]["allow_sudo"] = False
+        pod = ctl.scale_values(self.c, "example", "gke-2cpu-4gb-amd64")["template"]["spec"]
+        self.assertFalse(pod["containers"][0]["securityContext"]["allowPrivilegeEscalation"])
+        self.assertEqual(pod["containers"][0]["securityContext"]["capabilities"], {"drop": ["ALL"]})
+        self.assertNotIn("supplementalGroups", pod["securityContext"])
+
+    def test_sudo_setting_rejects_non_boolean_values(self):
+        self.config_error(lambda c: c["profiles"]["gke-2cpu-4gb-amd64"].update(allow_sudo="true"))
+
     def test_custom_image_applies_to_all_runner_init_containers(self):
         image = "ghcr.io/example/runner@sha256:" + "a" * 64
         self.c["runner_image"] = image
         pod = ctl.scale_values(self.c, "example", "gke-2cpu-4gb-arm64")["template"]["spec"]
         for c in [pod["containers"][0], *pod["initContainers"][:2]]:
             self.assertEqual(c["image"], image)
+
+    def test_target_image_overrides_global_for_runner_and_init_containers(self):
+        self.c["runner_image"] = "ghcr.io/example/global@sha256:" + "a" * 64
+        image = "us-central1-docker.pkg.dev/example-project/runner-images/toolchain@sha256:" + "b" * 64
+        self.c["targets"]["example"]["runner_image"] = image
+        pod = ctl.scale_values(self.c, "example", "gke-2cpu-4gb-amd64")["template"]["spec"]
+        for container in [pod["containers"][0], *pod["initContainers"][:2]]:
+            self.assertEqual(container["image"], image)
+        self.assertEqual(next(c for c in pod["initContainers"] if c["name"] == "dind")["image"], ctl.DOCKER_IMAGE)
+
+    def test_same_org_protected_target_has_distinct_names_and_shared_pool_selector(self):
+        self.c["targets"]["protected"] = {
+            **self.c["targets"]["example"],
+            "runner_group": "protected",
+            "scale_set_prefix": "gkp-",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(self.c))
+            parsed = ctl.load_config(path)
+        values = ctl.scale_values(parsed, "protected", "gke-8cpu-16gb-amd64")
+        self.assertEqual(values["runnerScaleSetName"], "gkp-8cpu-16gb-amd64")
+        self.assertEqual(values["runnerGroup"], "protected")
+        self.assertEqual(values["template"]["spec"]["nodeSelector"][ctl.PREFIX + "profile"], "gke-8cpu-16gb-amd64")
+        self.assertNotEqual(ctl.namespace("protected"), ctl.namespace("example"))
+
+    def test_same_org_overlapping_names_are_rejected_even_in_different_groups(self):
+        self.config_error(
+            lambda c: c["targets"].update(protected={**c["targets"]["example"], "runner_group": "protected"})
+        )
+
+    def test_prefix_cannot_recreate_existing_same_org_names(self):
+        self.config_error(
+            lambda c: c["targets"].update(
+                protected={**c["targets"]["example"], "runner_group": "protected", "scale_set_prefix": "gke-"}
+            )
+        )
+
+    def test_invalid_target_image_or_prefix_is_rejected(self):
+        original = copy.deepcopy(self.c)
+        for change in [
+            {"runner_image": "ghcr.io/example/image:latest"},
+            {"scale_set_prefix": "BAD!"},
+            {"scale_set_prefix": "x" * 46},
+        ]:
+            self.c = copy.deepcopy(original)
+            self.config_error(lambda c: c["targets"]["example"].update(change))
+
+    def test_readback_compares_github_scale_set_names(self):
+        self.c["targets"]["example"]["scale_set_prefix"] = "gkp-"
+        sets = [
+            {
+                "metadata": {"name": "resource-" + str(i)},
+                "spec": {"runnerScaleSetName": ctl.scale_set_name(self.c["targets"]["example"], profile)},
+            }
+            for i, profile in enumerate(self.c["profiles"])
+        ]
+        ctl.validate_scale_sets(self.c, "example", sets)
+        sets[0]["spec"]["runnerScaleSetName"] = "wrong-name"
+        with self.assertRaises(ValueError):
+            ctl.validate_scale_sets(self.c, "example", sets)
+
+    def test_repository_scoped_image_readers_render_without_image_credentials(self):
+        self.c["artifact_registry_repositories"] = [
+            {"project_id": "example-project", "location": "us-central1", "repository": "runner-images"}
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            ctl.render(self.c, directory)
+            variables = json.loads((Path(directory) / "terraform.tfvars.json").read_text())
+        self.assertEqual(variables["artifact_registry_repositories"], self.c["artifact_registry_repositories"])
+        self.assertNotIn("runner_image", variables)
 
     def test_render_contains_no_credentials_and_separates_targets(self):
         self.c["targets"]["second"] = {"github_url": "https://github.com/another/repo", "github_secret": "another-app"}
