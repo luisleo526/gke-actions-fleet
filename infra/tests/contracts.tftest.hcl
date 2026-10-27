@@ -13,6 +13,21 @@ variables {
   }
 }
 
+run "private_image_reader_is_repository_scoped" {
+  command = plan
+  variables {
+    artifact_registry_repositories = [{ project_id = "test-runner-project", location = "us-central1", repository = "runner-images" }]
+  }
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.runner_reader["test-runner-project/us-central1/runner-images"].role == "roles/artifactregistry.reader" && google_artifact_registry_repository_iam_member.runner_reader["test-runner-project/us-central1/runner-images"].repository == "runner-images"
+    error_message = "Image pulls must use an explicit repository-level reader binding."
+  }
+  assert {
+    condition     = google_project_iam_member.node_role.role == "roles/container.defaultNodeServiceAccount"
+    error_message = "Artifact Registry reader must not be granted at project level."
+  }
+}
+
 run "one_cluster_with_zero_based_pools" {
   command = plan
   assert {

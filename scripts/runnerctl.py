@@ -83,15 +83,37 @@ def validate_machine(profile_name, p, machine_type):
     require(not (family == "t2a" and p["spot"]), "T2A profiles use on-demand; choose another supported family for Spot")
 
 
+def validate_runner_image(value):
+    require(
+        isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}", value),
+        "runner_image must use an immutable image digest",
+    )
+
+
+def scale_set_name(target, profile_name):
+    prefix = target.get("scale_set_prefix", "")
+    # Built-in profile keys already include the default gke- prefix.
+    suffix = profile_name.removeprefix("gke-") if prefix else profile_name
+    result = prefix + suffix
+    name(result, 45)
+    return result
+
+
+def validate_scale_sets(c, target, sets):
+    actual = {s["spec"].get("runnerScaleSetName", s["metadata"]["name"]) for s in sets}
+    expected = {scale_set_name(c["targets"][target], profile) for profile in c["profiles"]}
+    require(actual == expected, f"{namespace(target)}: installed scale sets differ from configuration")
+
+
 def load_config(path):
     c = json.loads(Path(path).read_text())
-    keys(c, ["project_id", "region", "zone", "cluster_name", "admin_cidrs", "targets", "profiles"], ["runner_image"])
+    keys(
+        c,
+        ["project_id", "region", "zone", "cluster_name", "admin_cidrs", "targets", "profiles"],
+        ["runner_image", "artifact_registry_repositories"],
+    )
     if "runner_image" in c:
-        require(
-            isinstance(c["runner_image"], str)
-            and re.fullmatch(r"[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}", c["runner_image"]),
-            "runner_image must use an immutable image digest",
-        )
+        validate_runner_image(c["runner_image"])
     require(
         isinstance(c["project_id"], str) and re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", c["project_id"]),
         "Invalid GCP project ID",
@@ -138,10 +160,13 @@ def load_config(path):
             allocated += alternative["max_nodes"]
         require(allocated < p["max_runners"], "Alternative budgets must leave at least one primary node slot")
     require(isinstance(c["targets"], dict) and c["targets"], "targets must not be empty")
-    urls = set()
+    names_by_url = {}
     for target_name, target in c["targets"].items():
         name(target_name)
-        keys(target, ["github_url", "github_secret"], ["runner_group"])
+        keys(target, ["github_url", "github_secret"], ["runner_group", "runner_image", "scale_set_prefix"])
+        if "runner_image" in target:
+            validate_runner_image(target["runner_image"])
+        require(isinstance(target.get("scale_set_prefix", ""), str), "scale_set_prefix must be a string")
         name(target["github_secret"])
         require(
             isinstance(target["github_url"], str)
@@ -149,14 +174,34 @@ def load_config(path):
             "Use a github.com organization or repository URL without a trailing slash",
         )
         normalized = target["github_url"].lower()
-        require(normalized not in urls, "Duplicate GitHub target: scale set names must be unique within a target/group")
-        urls.add(normalized)
+        target_names = {scale_set_name(target, profile) for profile in c["profiles"]}
+        existing_names = names_by_url.setdefault(normalized, set())
+        require(
+            not existing_names.intersection(target_names),
+            "Same-URL targets require non-overlapping scale_set_prefix names",
+        )
+        existing_names.update(target_names)
         if "runner_group" in target:
             require(
                 isinstance(target["runner_group"], str) and target["runner_group"].strip(),
                 "runner_group must not be empty",
             )
             require(target["github_url"].count("/") == 3, "runner_group is only valid for an organization target")
+    repositories = c.get("artifact_registry_repositories", [])
+    require(isinstance(repositories, list), "artifact_registry_repositories must be a list")
+    identities = set()
+    for repository in repositories:
+        keys(repository, ["project_id", "location", "repository"])
+        require(
+            isinstance(repository["project_id"], str)
+            and re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", repository["project_id"]),
+            "Invalid Artifact Registry project ID",
+        )
+        name(repository["location"], 63)
+        name(repository["repository"], 63)
+        identity = tuple(repository[k] for k in ["project_id", "location", "repository"])
+        require(identity not in identities, "Duplicate Artifact Registry repository")
+        identities.add(identity)
     return c
 
 
@@ -201,7 +246,7 @@ def resources(cpu, memory, storage):
 
 def scale_values(c, target_name, profile_name):
     p, target = c["profiles"][profile_name], c["targets"][target_name]
-    runner_image = c.get("runner_image", RUNNER_IMAGE)
+    runner_image = target.get("runner_image", c.get("runner_image", RUNNER_IMAGE))
     allow_sudo = p.get("allow_sudo", True)
     runner = {
         "name": "runner",
@@ -337,7 +382,7 @@ def scale_values(c, target_name, profile_name):
     values = {
         "githubConfigUrl": target["github_url"],
         "githubConfigSecret": target["github_secret"],
-        "runnerScaleSetName": profile_name,
+        "runnerScaleSetName": scale_set_name(target, profile_name),
         "minRunners": 0,
         "maxRunners": p["max_runners"],
         "controllerServiceAccount": {"namespace": "arc-system", "name": "arc-controller"},
@@ -449,6 +494,7 @@ def render(c, out):
     out = Path(out)
     tf = {k: c[k] for k in ("project_id", "region", "zone", "cluster_name", "admin_cidrs")}
     tf["profiles"] = node_pool_variants(c)
+    tf["artifact_registry_repositories"] = c.get("artifact_registry_repositories", [])
     write_json(out / "terraform.tfvars.json", tf)
     write_json(out / "storage-class.json", storage_class(c))
     write_json(
@@ -562,10 +608,7 @@ def snapshot(c):
     for target in c["targets"]:
         ns = namespace(target)
         sets = json.loads(kube(c, ["get", "autoscalingrunnersets", "-n", ns, "-o", "json"], capture=True))["items"]
-        require(
-            {s["metadata"]["name"] for s in sets} == set(c["profiles"]),
-            f"{ns}: installed scale sets differ from configuration",
-        )
+        validate_scale_sets(c, target, sets)
         result["targets"][target] = {"scale_sets": sets}
         for key, resource in [("pods", "pods"), ("runners", "ephemeralrunners"), ("claims", "pvc")]:
             args = ["get", resource, "-n", ns, "-o", "json"]

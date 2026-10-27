@@ -1,5 +1,5 @@
 locals {
-  services = toset(["compute.googleapis.com", "container.googleapis.com", "iam.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com"])
+  services = toset(concat(["compute.googleapis.com", "container.googleapis.com", "iam.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com"], length(var.artifact_registry_repositories) > 0 ? ["artifactregistry.googleapis.com"] : []))
 }
 
 # Bind each state to its deployment project. A wrong variable file must fail at
@@ -72,6 +72,16 @@ resource "google_project_iam_member" "node_role" {
   project = var.project_id
   role    = "roles/container.defaultNodeServiceAccount"
   member  = "serviceAccount:${google_service_account.nodes.email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "runner_reader" {
+  for_each   = { for repository in var.artifact_registry_repositories : "${repository.project_id}/${repository.location}/${repository.repository}" => repository }
+  project    = each.value.project_id
+  location   = each.value.location
+  repository = each.value.repository
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.nodes.email}"
+  depends_on = [google_project_service.required]
 }
 
 # One cluster for every size and CPU architecture. Private nodes use Cloud NAT.

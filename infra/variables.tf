@@ -27,3 +27,13 @@ variable "deletion_protection" {
   type    = bool
   default = true
 }
+
+variable "artifact_registry_repositories" {
+  description = "Explicit existing repositories the node service account may pull from. No project-level Artifact Registry role is granted."
+  type = list(object({
+    project_id = string
+    location   = string
+    repository = string
+  }))
+  default = []
+}

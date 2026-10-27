@@ -210,6 +210,8 @@ make charts
 
 固定版本與 image digests 位於 `scripts/runnerctl.py`。更新 runner 需跟上 GitHub 的支援週期；更新 ARC 時同步更新兩個 charts、checksums、CRDs 及驗證紀錄，詳見營運手冊。
 
+同一 organization 的一般／保護工作可使用不同 targets、namespace、App Secret 與 scale-set 名稱；`targets.NAME.runner_image` 支援各 target 使用不同的 digest-pinned image，`scale_set_prefix: "gkp-"` 可將內建 `gke-*` 名稱轉為獨立的 `gkp-*`。私有 Artifact Registry 的 pull 權限可用 `artifact_registry_repositories` 明確設定 repository-level reader。操作與權限邊界見 [targets.md](docs/targets.md)；安裝不會重設 GitHub runner group 的既有 allowlist。
+
 目前已完成與待完成的檢查見 [validation status](docs/validation.md)。
 
 公開發布與憑證處理規則見 [SECURITY.md](SECURITY.md)。請只發布 Git 中經檢查的原始碼；本機 `build/`、實際設定與 Terraform state 不應隨整個工作資料夾打包公開。
