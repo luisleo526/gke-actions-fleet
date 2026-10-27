@@ -27,7 +27,8 @@
           "machine_type": "n2d-standard-4",
           "max_nodes": 8
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-4cpu-8gb-amd64": {
       "architecture": "amd64",
@@ -42,7 +43,8 @@
           "machine_type": "n2d-standard-8",
           "max_nodes": 8
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-8cpu-16gb-amd64": {
       "architecture": "amd64",
@@ -57,7 +59,8 @@
           "machine_type": "n2d-standard-16",
           "max_nodes": 4
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-16cpu-32gb-amd64": {
       "architecture": "amd64",
@@ -72,7 +75,8 @@
           "machine_type": "n2d-standard-32",
           "max_nodes": 4
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-32cpu-64gb-amd64": {
       "architecture": "amd64",
@@ -87,7 +91,8 @@
           "machine_type": "n2d-standard-48",
           "max_nodes": 4
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-2cpu-4gb-arm64": {
       "architecture": "arm64",
@@ -102,7 +107,8 @@
           "machine_type": "t2a-standard-8",
           "max_nodes": 8
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-4cpu-8gb-arm64": {
       "architecture": "arm64",
@@ -117,7 +123,8 @@
           "machine_type": "t2a-standard-16",
           "max_nodes": 8
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-8cpu-16gb-arm64": {
       "architecture": "arm64",
@@ -132,7 +139,8 @@
           "machine_type": "t2a-standard-32",
           "max_nodes": 4
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-16cpu-32gb-arm64": {
       "architecture": "arm64",
@@ -148,7 +156,8 @@
           "max_nodes": 4,
           "zone": "us-central1-b"
         }
-      ]
+      ],
+      "allow_sudo": true
     },
     "gke-32cpu-64gb-arm64": {
       "architecture": "arm64",
@@ -164,7 +173,8 @@
           "max_nodes": 4,
           "zone": "us-central1-b"
         }
-      ]
+      ],
+      "allow_sudo": true
     }
   }
 }

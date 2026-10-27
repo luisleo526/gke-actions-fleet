@@ -119,6 +119,32 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([c["name"] for c in pod["initContainers"]], ["init-work"])
         self.assertFalse(any(e["name"] == "DOCKER_HOST" for e in pod["containers"][0]["env"]))
 
+    def test_standard_runner_can_use_sudo_without_host_privileges(self):
+        for name in self.c["profiles"]:
+            with self.subTest(profile=name):
+                pod = ctl.scale_values(self.c, "example", name)["template"]["spec"]
+                runner = pod["containers"][0]
+                self.assertTrue(runner["securityContext"]["runAsNonRoot"])
+                self.assertTrue(runner["securityContext"]["allowPrivilegeEscalation"])
+                self.assertIn(27, pod["securityContext"]["supplementalGroups"])
+                self.assertNotIn("capabilities", runner["securityContext"])
+                self.assertNotIn("privileged", runner["securityContext"])
+                self.assertNotIn("ephemeral-storage", runner["resources"]["limits"])
+                self.assertEqual(runner["resources"]["requests"]["ephemeral-storage"], "2Gi")
+                self.assertFalse(pod["automountServiceAccountToken"])
+                self.assertFalse(pod.get("hostPID", False))
+                self.assertFalse(pod.get("hostNetwork", False))
+
+    def test_sudo_can_be_disabled_for_restricted_profiles(self):
+        self.c["profiles"]["gke-2cpu-4gb-amd64"]["allow_sudo"] = False
+        pod = ctl.scale_values(self.c, "example", "gke-2cpu-4gb-amd64")["template"]["spec"]
+        self.assertFalse(pod["containers"][0]["securityContext"]["allowPrivilegeEscalation"])
+        self.assertEqual(pod["containers"][0]["securityContext"]["capabilities"], {"drop": ["ALL"]})
+        self.assertNotIn("supplementalGroups", pod["securityContext"])
+
+    def test_sudo_setting_rejects_non_boolean_values(self):
+        self.config_error(lambda c: c["profiles"]["gke-2cpu-4gb-amd64"].update(allow_sudo="true"))
+
     def test_custom_image_applies_to_all_runner_init_containers(self):
         image = "ghcr.io/example/runner@sha256:" + "a" * 64
         self.c["runner_image"] = image

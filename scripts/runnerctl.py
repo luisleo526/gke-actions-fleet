@@ -112,8 +112,11 @@ def load_config(path):
     for profile_name, p in c["profiles"].items():
         name(profile_name)
         keys(
-            p, ["architecture", "machine_type", "cpu", "memory_gib", "max_runners", "spot", "docker"], ["alternatives"]
+            p,
+            ["architecture", "machine_type", "cpu", "memory_gib", "max_runners", "spot", "docker"],
+            ["alternatives", "allow_sudo"],
         )
+        require(type(p.get("allow_sudo", True)) is bool, "allow_sudo must be a boolean")
         validate_machine(profile_name, p, p["machine_type"])
         integer(p["max_runners"], 1, 100, "max_runners")
         alternatives = p.get("alternatives", [])
@@ -199,6 +202,7 @@ def resources(cpu, memory, storage):
 def scale_values(c, target_name, profile_name):
     p, target = c["profiles"][profile_name], c["targets"][target_name]
     runner_image = c.get("runner_image", RUNNER_IMAGE)
+    allow_sudo = p.get("allow_sudo", True)
     runner = {
         "name": "runner",
         "image": runner_image,
@@ -208,8 +212,7 @@ def scale_values(c, target_name, profile_name):
             "runAsNonRoot": True,
             "runAsUser": 1001,
             "runAsGroup": 123,
-            "allowPrivilegeEscalation": False,
-            "capabilities": {"drop": ["ALL"]},
+            "allowPrivilegeEscalation": allow_sudo,
         },
         "env": [
             {"name": "RUNNER_PROFILE", "value": profile_name},
@@ -234,6 +237,11 @@ def scale_values(c, target_name, profile_name):
         ],
         "volumeMounts": [{"name": "work", "mountPath": "/home/runner/_work", "subPath": "workspace"}],
     }
+    # Reserve writable-layer space without imposing a 2 GiB package-install cap.
+    # The node OS disk still bounds this storage; workspace/Docker use their 80 GiB PVC.
+    del runner["resources"]["limits"]["ephemeral-storage"]
+    if not allow_sudo:
+        runner["securityContext"]["capabilities"] = {"drop": ["ALL"]}
     spec = {
         "nodeSelector": {PREFIX + "profile": profile_name, "kubernetes.io/arch": p["architecture"]},
         "tolerations": [
@@ -286,6 +294,9 @@ def scale_values(c, target_name, profile_name):
             }
         ],
     }
+    if allow_sudo:
+        # The supported runner base image grants passwordless sudo to GID 27.
+        spec["securityContext"]["supplementalGroups"] = [27]
     if p["docker"]:
         runner["env"] += [
             {"name": "DOCKER_HOST", "value": "unix:///var/run/docker.sock"},
