@@ -22,7 +22,9 @@ Copy [examples/secrets-environment.yml](../examples/secrets-environment.yml) to 
 authorized workflow path. Create repository secret `CI_API_TOKEN`, create a
 `staging` GitHub Environment containing secret `DEPLOY_TOKEN` and variable
 `API_URL`, and configure its approval/branch rules. The job explicitly references
-each value without printing it. Organization secrets work when their repository
+each value without printing it. If the operator provides a separate protected target, release/publish/baseline-promotion jobs holding privileged credentials must select that protected group and its distinct labels (see [targets.md](targets.md)). Do not fall back to a general group when a protected job queues. The generic example must be adapted to the organization’s approved routing policy.
+
+Organization secrets work when their repository
 allowlist permits that repository. An environment attached to a different job
 does not automatically apply to the GKE job.
 
