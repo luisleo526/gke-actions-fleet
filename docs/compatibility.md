@@ -64,3 +64,25 @@ node/operator credentials or Kubernetes cluster-admin rights. Private network
 endpoints still require explicitly configured routes/egress rules. CPU/RAM,
 workspace size, job lifetime and the selected architecture remain fleet resource
 policies. These do not alter the normal GitHub secrets/token delivery protocol.
+
+## Standard tool-cache path
+
+All targets use `RUNNER_TOOL_CACHE=/opt/hostedtoolcache` and
+`AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache`. That directory is a runner-owned
+subdirectory of the same disposable job PVC as the workspace and Docker data;
+it does not consume the node OS disk. DinD sees the same mount path so Docker
+bind mounts can resolve it. Tools disappear with the job disk.
+
+This follows the Ubuntu environment in
+[actions/runner-images](https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/configure-environment.sh),
+which sets both variables to `/opt/hostedtoolcache`. The
+[setup-python self-hosted Ubuntu documentation](https://github.com/actions/setup-python/blob/v6/docs/advanced-usage.md#ubuntu)
+also requires that the runner user can write the cache. That documentation
+allows custom locations; this fleet deliberately uses the hosted-image location
+to match prebuilt Python library search paths when child environments omit
+`LD_LIBRARY_PATH`.
+
+Run [the tool-cache regression workflow](../examples/toolcache.yml) on AMD64 and
+ARM64. It checks Python 3.11/3.12 RUNPATH, the loaded libpython mapping, isolated
+pip imports and clean-environment child processes. Template updates apply to new
+runner pods; do not interrupt busy pods to replace their mounts.

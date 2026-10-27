@@ -69,6 +69,12 @@ def verify(c, out):
                 )
                 expected_image = c["targets"][target].get("runner_image", c.get("runner_image", ctl.RUNNER_IMAGE))
                 ctl.require(pod["containers"][0]["image"] == expected_image, "Target runner image lost")
+                runner = pod["containers"][0]
+                env = {entry["name"]: entry.get("value") for entry in runner["env"]}
+                for key in ["RUNNER_TOOL_CACHE", "AGENT_TOOLSDIRECTORY"]:
+                    ctl.require(env[key] == "/opt/hostedtoolcache", "Standard tool-cache path lost")
+                expected_mount = {"name": "work", "mountPath": "/opt/hostedtoolcache", "subPath": "toolcache"}
+                ctl.require(expected_mount in runner["volumeMounts"], "Tool cache is not on the job disk")
                 ctl.require(
                     pod["nodeSelector"]["kubernetes.io/arch"] == profile["architecture"], "Architecture selector lost"
                 )
@@ -78,6 +84,8 @@ def verify(c, out):
                     "Work volume lost",
                 )
                 if profile["docker"]:
+                    docker = next(i for i in pod["initContainers"] if i["name"] == "dind")
+                    ctl.require(expected_mount in docker["volumeMounts"], "Docker tool-cache mount lost")
                     ctl.require(
                         next(i for i in pod["initContainers"] if i["name"] == "dind")["restartPolicy"] == "Always",
                         "Native sidecar lost",
