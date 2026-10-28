@@ -212,8 +212,15 @@ class RunnerTests(unittest.TestCase):
                 self.assertIn(27, pod["securityContext"]["supplementalGroups"])
                 self.assertNotIn("capabilities", runner["securityContext"])
                 self.assertNotIn("privileged", runner["securityContext"])
-                self.assertNotIn("ephemeral-storage", runner["resources"]["limits"])
+                self.assertEqual(runner["resources"]["limits"]["ephemeral-storage"], "5Gi")
                 self.assertEqual(runner["resources"]["requests"]["ephemeral-storage"], "2Gi")
+                # Kubelet's pod cap is the sum of container limits, sidecar included.
+                sidecars = [c for c in pod["initContainers"] if c.get("restartPolicy") == "Always"]
+                cap = sum(
+                    int(c["resources"]["limits"]["ephemeral-storage"].removesuffix("Gi"))
+                    for c in pod["containers"] + sidecars
+                )
+                self.assertEqual(cap, 7 if sidecars else 5)
                 self.assertFalse(pod["automountServiceAccountToken"])
                 self.assertFalse(pod.get("hostPID", False))
                 self.assertFalse(pod.get("hostNetwork", False))
