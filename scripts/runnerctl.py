@@ -26,6 +26,7 @@ CHART_HASHES = {
 }
 PREFIX = "gke-gh-runner.io/"
 DEFAULT_WORKSPACE_GIB = 480
+RUNNER_EPHEMERAL_LIMIT = "5Gi"
 
 
 def require(condition, message):
@@ -292,9 +293,12 @@ def scale_values(c, target_name, profile_name):
             {"name": "work", "mountPath": "/opt/hostedtoolcache", "subPath": "toolcache"},
         ],
     }
-    # Reserve writable-layer space without imposing a 2 GiB package-install cap.
-    # The node OS disk bounds this storage; workspace/Docker use the configured PVC.
-    del runner["resources"]["limits"]["ephemeral-storage"]
+    # Kubelet evicts a pod whose writable layers, logs and emptyDirs exceed the SUM of
+    # its container limits, so the dind sidecar's 2 GiB alone capped the whole pod.
+    # One runner per node and a 30 GB boot disk leave about 7.8 GiB allocatable:
+    # 5 GiB here plus dind's 2 GiB is a 7 GiB pod cap, so a runaway job is evicted
+    # alone before the node reaches DiskPressure. Workspace/Docker use the PVC.
+    runner["resources"]["limits"]["ephemeral-storage"] = RUNNER_EPHEMERAL_LIMIT
     if not allow_sudo:
         runner["securityContext"]["capabilities"] = {"drop": ["ALL"]}
     spec = {
