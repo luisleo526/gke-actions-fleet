@@ -20,7 +20,7 @@
       "cpu": 2,
       "memory_gib": 4,
       "max_runners": 16,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -36,7 +36,7 @@
       "cpu": 4,
       "memory_gib": 8,
       "max_runners": 16,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -52,7 +52,7 @@
       "cpu": 8,
       "memory_gib": 16,
       "max_runners": 16,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -68,7 +68,7 @@
       "cpu": 16,
       "memory_gib": 32,
       "max_runners": 16,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -84,7 +84,7 @@
       "cpu": 32,
       "memory_gib": 64,
       "max_runners": 16,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -100,7 +100,7 @@
       "cpu": 2,
       "memory_gib": 4,
       "max_runners": 16,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -116,7 +116,7 @@
       "cpu": 4,
       "memory_gib": 8,
       "max_runners": 16,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -132,7 +132,7 @@
       "cpu": 8,
       "memory_gib": 16,
       "max_runners": 8,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -148,7 +148,7 @@
       "cpu": 16,
       "memory_gib": 32,
       "max_runners": 8,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {
@@ -165,7 +165,7 @@
       "cpu": 32,
       "memory_gib": 64,
       "max_runners": 8,
-      "spot": false,
+      "spot": true,
       "docker": true,
       "alternatives": [
         {

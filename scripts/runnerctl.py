@@ -82,7 +82,6 @@ def validate_machine(profile_name, p, machine_type):
         p["memory_gib"], 1, int(memory - reserved - 3), "memory_gib (must leave GKE, DaemonSet and Docker headroom)"
     )
     require(type(p["spot"]) is bool and type(p["docker"]) is bool, "spot/docker must be booleans")
-    require(not (family == "t2a" and p["spot"]), "T2A profiles use on-demand; choose another supported family for Spot")
 
 
 def validate_runner_image(value):
@@ -232,6 +231,7 @@ def node_pool_variants(c):
             require(pool_name not in pools and pool_name not in c["profiles"], "Node pool name collision")
             pools[pool_name] = {
                 **primary,
+                "spot": False,
                 "machine_type": alternative["machine_type"],
                 "max_runners": alternative["max_nodes"],
                 "zone": alternative.get("zone", c["zone"]),
