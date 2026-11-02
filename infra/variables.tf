@@ -28,6 +28,25 @@ variable "deletion_protection" {
   default = true
 }
 
+variable "system_node_count" {
+  description = "Fixed system capacity for ARC listeners and cluster services. Grow before a machine-type reduction."
+  type        = number
+  default     = 1
+  validation {
+    condition     = var.system_node_count >= 1 && var.system_node_count <= 20 && floor(var.system_node_count) == var.system_node_count
+    error_message = "system_node_count must be an integer in 1..20."
+  }
+}
+
+variable "system_machine_type" {
+  type    = string
+  default = "e2-standard-4"
+  validation {
+    condition     = contains(["e2-standard-2", "e2-standard-4", "e2-standard-8", "e2-standard-16", "e2-standard-32"], var.system_machine_type)
+    error_message = "Use a supported E2 standard system machine."
+  }
+}
+
 variable "artifact_registry_repositories" {
   description = "Explicit existing repositories the node service account may pull from. No project-level Artifact Registry role is granted."
   type = list(object({

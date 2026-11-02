@@ -35,7 +35,66 @@ To roll a profile back, repeat the same zero-node procedure with its previous `s
 
 The example maxima require 1,232 N2 Spot vCPUs, 864 N2D on-demand vCPUs, and 1,184 T2A on-demand vCPUs (480 primary + 704 alt1). The N2 Spot demand uses the separate PREEMPTIBLE_CPUS quota when available. At 176 runner nodes, 30 GB boot disks plus 480 GB work disks and the 50 GB system disk require 89,810 GB of SSD_TOTAL_GB capacity. Check regional limits and other usage before applying; a 500-vCPU T2A limit cannot satisfy these unchanged ARM budgets. Allow headroom for asynchronous disk deletion.
 
-One 480 GiB disk is created per runner pod, even if that pod never gets a job. Failed/canceled jobs must still result in pod deletion for Kubernetes GC to delete the claim and CSI disk. Data is not securely overwritten by this project; GCP disk deletion and provider storage guarantees apply. Job caches/artifacts uploaded elsewhere have their own retention policies.
+Each runner pod requests its configured job-disk size. `WaitForFirstConsumer` delays provisioning for unschedulable pods, including when the shared pool budget is exhausted. A bound disk can exist even if its pod never gets a job. Failed/canceled jobs must still result in pod deletion for Kubernetes GC to delete the claim and CSI disk. Data is not securely overwritten by this project; GCP disk deletion and provider storage guarantees apply. Job caches/artifacts uploaded elsewhere have their own retention policies.
+
+## Disk variant rollout and measurement
+
+Enable `workspace_variants_gib: [64, 128, 256, 512]` and explicitly retain each
+target's `workspace_gib: 480` for phase 1. Ten profiles and four targets create
+160 additional listeners, 200 total. Every variant has the base profile's
+`maxRunners`, selector and required cross-namespace anti-affinity. All variants
+and targets compete for the same bounded node pools; ARC's separate ceilings
+can create additional Pending pods, but do not multiply active runner capacity.
+At 176 nodes with 512 GiB job disks, 30 GB boot disks and four 50 GB system
+disks, the configured worst-case SSD capacity is 95,592 GB, before other usage
+and deletion lag. Check the actual regional quota and current usage.
+
+Measure existing listeners with the metrics API and count system-node pods,
+including DaemonSets. The original 110-pod limit cannot accommodate 200 listeners
+on one node; two nodes also leave insufficient slots for system services.
+Keep existing listener requests unchanged at 50 mCPU / 64 MiB. New disk
+listeners request 10 mCPU / 32 MiB, with a 256 MiB memory limit and no CPU limit.
+These requests should be checked against live usage and registration bursts.
+A four-node `e2-standard-2` system pool provides 440 pod slots without changing
+the per-node pod limit. Using us-central1 list-price estimates of
+$0.06701142/hour per E2 standard-2 and $0.10/GB-month PD Balanced, its delta
+over one E2 standard-4 with a 50 GB boot disk is about $112.84/month at 730 hours,
+excluding taxes, discounts, logging and transient upgrade surge nodes. See
+[Compute pricing](https://cloud.google.com/compute/vm-instance-pricing) and
+[disk pricing](https://cloud.google.com/compute/disks-image-pricing).
+
+Review a saved full OpenTofu plan at each step. Grow the system pool's node
+count first, verify readiness and that no runner pods use it, then update its
+machine type through GKE's rolling node update. Runner pools must have no plan
+changes. Do not cordon/drain/evict runner nodes. Preserve the current local state.
+Use the existing private `KUBECONFIG`; additions-only installation uses its
+configured context and does not refresh credentials:
+
+```sh
+python scripts/runnerctl.py install --add-only --plan-only
+# Review build/additions.json, values, and checksum-pinned chart templates.
+python scripts/runnerctl.py install --add-only
+```
+
+Both commands read back every existing release's supplied Helm values before
+any installation and record differences in `build/skipped-existing.json`.
+Existing releases are always skipped, including pre-existing drift; a
+non-deployed release fails the preflight. This mode never upgrades the
+controller, existing scale sets, policies or storage class.
+Verify all new listeners, PVC templates and unchanged base templates, run a real
+job through an allowed workflow that supports the explicit suffix, and require
+a final full no-op OpenTofu plan plus an empty additions plan.
+
+Run `scripts/sample_disk_usage.py --context CONTEXT --output usage.jsonl
+--exit-file sampler.exit` under a persistent session. It reads every runner
+node's kubelet summary every 120 seconds for 24 hours, retaining only runner
+work-PVC usage and operational identity. Heartbeat records preserve idle scans
+and node/read errors. `python scripts/summarize_disk_usage.py usage.jsonl`
+groups by target and scale set, counts distinct observed runner pod UIDs and
+reports p50/p95/max of per-pod sampled peaks using nearest-rank percentiles.
+Jobs shorter than the sampling interval can be missed, idle runner pods can
+be counted, and peaks between samples are lower bounds; use this as sizing
+evidence with headroom, not a complete job audit.
 
 ## Troubleshooting
 

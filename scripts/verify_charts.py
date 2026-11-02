@@ -43,7 +43,8 @@ def verify(c, out):
             capture=True,
         )
         for target in c["targets"]:
-            for name, profile in c["profiles"].items():
+            for name, (base, size) in ctl.scale_set_variants(c).items():
+                profile = c["profiles"][base]
                 rendered = ctl.run(
                     [
                         "helm",
@@ -64,7 +65,7 @@ def verify(c, out):
                 jsonschema.validate(scale, schemas[("AutoscalingRunnerSet", "v1alpha1")])
                 pod = scale["spec"]["template"]["spec"]
                 ctl.require(
-                    scale["spec"]["runnerScaleSetName"] == ctl.scale_set_name(c["targets"][target], name),
+                    scale["spec"]["runnerScaleSetName"] == ctl.scale_set_name(c["targets"][target], base, size),
                     "Target scale-set name lost",
                 )
                 expected_image = c["targets"][target].get("runner_image", c.get("runner_image", ctl.RUNNER_IMAGE))
@@ -78,9 +79,13 @@ def verify(c, out):
                 ctl.require(
                     pod["nodeSelector"]["kubernetes.io/arch"] == profile["architecture"], "Architecture selector lost"
                 )
+                ctl.require(pod["nodeSelector"][ctl.PREFIX + "profile"] == base, "Base pool selector lost")
+                ctl.require(scale["spec"]["maxRunners"] == profile["max_runners"], "Base capacity ceiling lost")
+                expected_size = ctl.workspace_size(c, target, base, size)
+                ctl.require(env["RUNNER_WORKSPACE_GIB"] == str(expected_size), "Workspace environment lost")
                 ctl.require(
                     pod["volumes"][0]["ephemeral"]["volumeClaimTemplate"]["spec"]["resources"]["requests"]["storage"]
-                    == f"{profile.get('workspace_gib', c.get('workspace_gib', ctl.DEFAULT_WORKSPACE_GIB))}Gi",
+                    == f"{expected_size}Gi",
                     "Work volume lost",
                 )
                 if profile["docker"]:

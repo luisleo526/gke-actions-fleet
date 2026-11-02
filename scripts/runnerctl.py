@@ -26,6 +26,7 @@ CHART_HASHES = {
 }
 PREFIX = "gke-gh-runner.io/"
 DEFAULT_WORKSPACE_GIB = 480
+WORKSPACE_VARIANTS_GIB = (64, 128, 256, 512)
 RUNNER_EPHEMERAL_LIMIT = "5Gi"
 
 
@@ -91,18 +92,39 @@ def validate_runner_image(value):
     )
 
 
-def scale_set_name(target, profile_name):
+def scale_set_name(target, profile_name, workspace_gib=None):
     prefix = target.get("scale_set_prefix", "")
     # Built-in profile keys already include the default gke- prefix.
     suffix = profile_name.removeprefix("gke-") if prefix else profile_name
     result = prefix + suffix
+    if workspace_gib is not None:
+        result += f"-{workspace_gib}gb"
     name(result, 45)
     return result
 
 
+def scale_set_variants(c):
+    """Helm release -> (base profile, optional explicit disk size); never node pools."""
+    variants = {}
+    for profile in c["profiles"]:
+        for size in (None, *c.get("workspace_variants_gib", [])):
+            release = scale_set_name({}, profile, size)
+            require(release not in variants, "Scale-set release name collision")
+            variants[release] = (profile, size)
+    return variants
+
+
+def workspace_size(c, target, profile, variant_gib=None):
+    if variant_gib is not None:
+        return variant_gib
+    return c["targets"][target].get(
+        "workspace_gib", c["profiles"][profile].get("workspace_gib", c.get("workspace_gib", DEFAULT_WORKSPACE_GIB))
+    )
+
+
 def validate_scale_sets(c, target, sets):
     actual = {s["spec"].get("runnerScaleSetName", s["metadata"]["name"]) for s in sets}
-    expected = {scale_set_name(c["targets"][target], profile) for profile in c["profiles"]}
+    expected = {scale_set_name(c["targets"][target], p, size) for p, size in scale_set_variants(c).values()}
     require(actual == expected, f"{namespace(target)}: installed scale sets differ from configuration")
 
 
@@ -111,11 +133,25 @@ def load_config(path):
     keys(
         c,
         ["project_id", "region", "zone", "cluster_name", "admin_cidrs", "targets", "profiles"],
-        ["runner_image", "artifact_registry_repositories", "workspace_gib"],
+        ["runner_image", "artifact_registry_repositories", "workspace_gib", "workspace_variants_gib", "system_pool"],
     )
     if "runner_image" in c:
         validate_runner_image(c["runner_image"])
     integer(c.get("workspace_gib", DEFAULT_WORKSPACE_GIB), 10, 16384, "workspace_gib")
+    variants = c.get("workspace_variants_gib", [])
+    require(isinstance(variants, list), "workspace_variants_gib must be a list")
+    require(
+        all(type(size) is int and size in WORKSPACE_VARIANTS_GIB for size in variants),
+        "workspace_variants_gib supports only 64, 128, 256, 512 GiB",
+    )
+    require(len(set(variants)) == len(variants), "Duplicate workspace variant")
+    system = c.get("system_pool", {})
+    keys(system, [], ["node_count", "machine_type"])
+    integer(system.get("node_count", 1), 1, 20, "system_pool.node_count")
+    require(
+        system.get("machine_type", "e2-standard-4") in {f"e2-standard-{n}" for n in (2, 4, 8, 16, 32)},
+        "system_pool.machine_type must be e2-standard-2/4/8/16/32",
+    )
     require(
         isinstance(c["project_id"], str) and re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", c["project_id"]),
         "Invalid GCP project ID",
@@ -169,7 +205,13 @@ def load_config(path):
     names_by_url = {}
     for target_name, target in c["targets"].items():
         name(target_name)
-        keys(target, ["github_url", "github_secret"], ["runner_group", "runner_image", "scale_set_prefix"])
+        keys(
+            target,
+            ["github_url", "github_secret"],
+            ["runner_group", "runner_image", "scale_set_prefix", "workspace_gib"],
+        )
+        if "workspace_gib" in target:
+            integer(target["workspace_gib"], 10, 16384, "target.workspace_gib")
         if "runner_image" in target:
             validate_runner_image(target["runner_image"])
         require(isinstance(target.get("scale_set_prefix", ""), str), "scale_set_prefix must be a string")
@@ -180,7 +222,8 @@ def load_config(path):
             "Use a github.com organization or repository URL without a trailing slash",
         )
         normalized = target["github_url"].lower()
-        target_names = {scale_set_name(target, profile) for profile in c["profiles"]}
+        target_names = {scale_set_name(target, p, size) for p, size in scale_set_variants(c).values()}
+        require(len(target_names) == len(scale_set_variants(c)), "Target scale-set name collision")
         existing_names = names_by_url.setdefault(normalized, set())
         require(
             not existing_names.intersection(target_names),
@@ -251,11 +294,11 @@ def resources(cpu, memory, storage):
     }
 
 
-def scale_values(c, target_name, profile_name):
+def scale_values(c, target_name, profile_name, variant_gib=None):
     p, target = c["profiles"][profile_name], c["targets"][target_name]
     runner_image = target.get("runner_image", c.get("runner_image", RUNNER_IMAGE))
     allow_sudo = p.get("allow_sudo", True)
-    workspace_gib = p.get("workspace_gib", c.get("workspace_gib", DEFAULT_WORKSPACE_GIB))
+    workspace_gib = workspace_size(c, target_name, profile_name, variant_gib)
     runner = {
         "name": "runner",
         "image": runner_image,
@@ -398,7 +441,7 @@ def scale_values(c, target_name, profile_name):
     values = {
         "githubConfigUrl": target["github_url"],
         "githubConfigSecret": target["github_secret"],
-        "runnerScaleSetName": scale_set_name(target, profile_name),
+        "runnerScaleSetName": scale_set_name(target, profile_name, variant_gib),
         "minRunners": 0,
         "maxRunners": p["max_runners"],
         "controllerServiceAccount": {"namespace": "arc-system", "name": "arc-controller"},
@@ -408,7 +451,12 @@ def scale_values(c, target_name, profile_name):
                 "containers": [
                     {
                         "name": "listener",
-                        "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}},
+                        "resources": {
+                            "requests": {"cpu": "10m", "memory": "32Mi"}
+                            if variant_gib
+                            else {"cpu": "50m", "memory": "64Mi"},
+                            "limits": {"memory": "256Mi"},
+                        },
                     }
                 ],
             }
@@ -512,6 +560,8 @@ def render(c, out):
     tf = {k: c[k] for k in ("project_id", "region", "zone", "cluster_name", "admin_cidrs")}
     tf["profiles"] = node_pool_variants(c)
     tf["artifact_registry_repositories"] = c.get("artifact_registry_repositories", [])
+    tf["system_node_count"] = c.get("system_pool", {}).get("node_count", 1)
+    tf["system_machine_type"] = c.get("system_pool", {}).get("machine_type", "e2-standard-4")
     write_json(out / "terraform.tfvars.json", tf)
     write_json(out / "storage-class.json", storage_class(c))
     write_json(
@@ -527,8 +577,8 @@ def render(c, out):
     for target in c["targets"]:
         write_json(out / target / "namespace.json", namespace_manifest(target))
         write_json(out / target / "network-policy.json", network_policy(target))
-        for profile in c["profiles"]:
-            write_json(out / target / f"{profile}.json", scale_values(c, target, profile))
+        for release, (profile, size) in scale_set_variants(c).items():
+            write_json(out / target / f"{release}.json", scale_values(c, target, profile, size))
 
 
 def run(args, data=None, capture=False):
@@ -557,9 +607,11 @@ def fetch_charts(out):
     return paths
 
 
-def install(c, out):
+def install(c, out, add_only=False, plan_only=False):
     render(c, out)
     charts = fetch_charts(out)
+    if add_only:
+        return install_additions(c, out, charts, plan_only)
     run(
         [
             "gcloud",
@@ -596,21 +648,106 @@ def install(c, out):
     )
     for target in c["targets"]:
         apply_json(c, network_policy(target))
-        for profile in c["profiles"]:
+        for release in scale_set_variants(c):
             run(
                 [
                     "helm",
                     "upgrade",
                     "--install",
-                    profile,
+                    release,
                     charts["gha-runner-scale-set"],
                     "--namespace",
                     namespace(target),
                     "-f",
-                    str(Path(out) / target / f"{profile}.json"),
+                    str(Path(out) / target / f"{release}.json"),
                     *common,
                 ]
             )
+
+
+def install_additions(c, out, charts, plan_only=False):
+    """Read back all existing releases, then install only missing scale sets."""
+    kube(c, ["get", "deployment", "arc-controller", "-n", "arc-system"], capture=True)
+    kube(c, ["get", "storageclass", "runner-work"], capture=True)
+    additions, skipped = [], []
+    for target in c["targets"]:
+        ns = namespace(target)
+        kube(c, ["get", "secret", c["targets"][target]["github_secret"], "-n", ns], capture=True)
+        releases = json.loads(
+            run(
+                [
+                    "helm",
+                    "list",
+                    "--deployed",
+                    "--failed",
+                    "--pending",
+                    "--uninstalling",
+                    "--uninstalled",
+                    "--kube-context",
+                    context(c),
+                    "-n",
+                    ns,
+                    "-o",
+                    "json",
+                ],
+                capture=True,
+            )
+        )
+        existing = {r["name"]: r for r in releases}
+        for release in scale_set_variants(c):
+            path = Path(out) / target / f"{release}.json"
+            if release in existing:
+                require(existing[release]["status"] == "deployed", f"{ns}/{release}: release is not deployed")
+                actual = json.loads(
+                    run(
+                        ["helm", "get", "values", release, "--kube-context", context(c), "-n", ns, "-o", "json"],
+                        capture=True,
+                    )
+                )
+                skipped.append(
+                    {
+                        "namespace": ns,
+                        "release": release,
+                        "revision": existing[release].get("revision"),
+                        "desired_values_differ": actual != json.loads(path.read_text()),
+                    }
+                )
+            else:
+                additions.append((ns, release, path))
+    write_json(Path(out) / "skipped-existing.json", skipped)
+    write_json(
+        Path(out) / "additions.json",
+        [
+            {
+                "namespace": ns,
+                "release": release,
+                "values_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "scale_set": json.loads(path.read_text())["runnerScaleSetName"],
+            }
+            for ns, release, path in additions
+        ],
+    )
+    if plan_only:
+        print(f"Planned {len(additions)} new scale sets; no existing resources change: {Path(out) / 'additions.json'}")
+        return
+    for ns, release, path in additions:
+        run(
+            [
+                "helm",
+                "install",
+                release,
+                charts["gha-runner-scale-set"],
+                "--kube-context",
+                context(c),
+                "--namespace",
+                ns,
+                "-f",
+                str(path),
+                "--wait",
+                "--timeout",
+                "10m",
+            ]
+        )
 
 
 def snapshot(c):
@@ -762,8 +899,15 @@ def main():
     parser.add_argument("--config", default="config.json")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("validate")
-    for command in ("render", "install"):
-        sub.add_parser(command).add_argument("--out", default="build")
+    sub.add_parser("render").add_argument("--out", default="build")
+    install_parser = sub.add_parser("install")
+    install_parser.add_argument("--out", default="build")
+    install_parser.add_argument(
+        "--add-only", action="store_true", help="Skip existing releases unchanged; install missing scale sets only"
+    )
+    install_parser.add_argument(
+        "--plan-only", action="store_true", help="With --add-only, write additions.json without installing"
+    )
     secret = sub.add_parser("create-secret")
     secret.add_argument("--target", required=True)
     secret.add_argument("--app-id", required=True)
@@ -781,7 +925,8 @@ def main():
         render(c, args.out)
         print(f"Rendered to {args.out}")
     elif args.command == "install":
-        install(c, args.out)
+        require(not args.plan_only or args.add_only, "--plan-only requires --add-only")
+        install(c, args.out, args.add_only, args.plan_only)
     elif args.command == "create-secret":
         require(args.target in c["targets"], "Unknown target")
         require(args.app_id.isdigit() and args.installation_id.isdigit(), "App and installation IDs must be numeric")

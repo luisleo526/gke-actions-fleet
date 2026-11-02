@@ -1,5 +1,17 @@
 mock_provider "google" {}
 
+run "system_capacity_is_configurable_without_extra_runner_pools" {
+  command = plan
+  variables {
+    system_node_count   = 4
+    system_machine_type = "e2-standard-2"
+  }
+  assert {
+    condition     = google_container_node_pool.system.node_count == 4 && google_container_node_pool.system.node_config[0].machine_type == "e2-standard-2" && length(google_container_node_pool.runner) == 4
+    error_message = "Listener capacity must be configurable independently of runner pools."
+  }
+}
+
 variables {
   project_id   = "test-runner-project"
   region       = "us-central1"

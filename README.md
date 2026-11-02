@@ -44,20 +44,23 @@ flowchart LR
 
 ## 工作磁碟容量與費用
 
-預設每個 job 使用 **480 GiB PD Balanced**，workspace、工具快取與 Docker data 共用。全域 `workspace_gib` 可修改預設值，單一 `profiles.NAME.workspace_gib` 可再覆寫；接受 10–16384 的整數 GiB。調整設定後重新 render/install，新的 runner pod 使用新容量，`runs-on` 名稱不必改動。名稱尾綴本身不會動態增加磁碟。
+預設每個 job 使用 **480 GiB PD Balanced**，workspace、工具快取與 Docker data 共用。設定 `workspace_variants_gib: [64, 128, 256, 512]` 後，每個 profile／target 另外建立 `-64gb`、`-128gb`、`-256gb`、`-512gb` scale sets，例如 `gke-8cpu-16gb-amd64-256gb` 或 `gkp-32cpu-64gb-arm64-512gb`。沒有尾綴的名稱在第一階段仍使用 480 GiB；不建立 `-32gb`，之後各 target 才分別將無尾綴預設改成 32 GiB。
+
+明確尾綴固定容量；無尾綴依序使用 `targets.NAME.workspace_gib`、`profiles.NAME.workspace_gib`、全域 `workspace_gib`，最後回退至 480 GiB。預設值接受 10–16384 的整數 GiB。新增 variants 不新增 node pools，也不增加 profile 的合計容量預算。各 scale set 的 `maxRunners` 沿用 base ceiling；既有 pool maxima 加上跨 namespace 的每節點一個 runner 規則限制所有 target／磁碟 variants 的合計執行量。ARC 仍可能建立等待容量的 Pending pods；這不是跨 scale set 的 GitHub queue 上限。
 
 ```json
 {
   "workspace_gib": 480,
-  "profiles": {
-    "gke-8cpu-16gb-amd64": {
-      "workspace_gib": 640
+  "workspace_variants_gib": [64, 128, 256, 512],
+  "targets": {
+    "example": {
+      "workspace_gib": 480
     }
   }
 }
 ```
 
-以上為既有設定的局部修改示意，profile 仍需保留 CPU、RAM、機型等必要欄位。Runner 提供 `RUNNER_WORKSPACE_GIB` 環境變數供工作讀取配置容量。
+以上為既有設定的局部修改示意，target 仍需保留 GitHub URL、Secret 等必要欄位。Runner 提供 `RUNNER_WORKSPACE_GIB` 環境變數供工作讀取配置容量。將單一 target 的 `workspace_gib` 改為 32，只影響之後建立的無尾綴 runner；先確認超過 32 GiB 的 jobs 已選擇明確尾綴。
 
 以 [GCP PD Balanced 官方價格](https://cloud.google.com/compute/disks-image-pricing) US$0.000136986/GiB-hour 估算，480 GiB 約 **US$0.06575/磁碟小時**；相較 80 GiB 增加約 **US$0.05479/小時**，相較 240 GiB 增加約 **US$0.03288/小時**。例如累計 100 個磁碟小時，80→480 GiB 約增加 US$5.48。費率依地區與帳單調整；費用包含磁碟建立到刪除的期間，不只 job 執行時間。
 
@@ -74,7 +77,7 @@ make setup
 
 編輯 `config.json`：填入 project、region、zone、實際管理者出口 IP 的 CIDR，以及 GitHub organization URL。範例的 `203.0.113.10/32` 是文件用位址，**必須更換**。預設 `us-central1-a` 同時提供 N2、T2A；更換區域前確認兩種機型可用性與 quota。保留需要的 profiles，可調整名稱、機型、Docker 開關與併發上限。
 
-`max_runners` 是該 GitHub target 的 scale set 上限，也是 **同一規格／架構所有 node pools 的合計容量預算**。多個 targets 競爭同一 pool；AMD64 與 ARM64 使用獨立 pools，不共用上限。依 CPU 2／4／8／16／32，AMD64 上限為 **16／24／32／24／24**（120 台），ARM64 為 **16／16／8／8／8**（56 台），合計最多 176 台 runner VM；只在有工作時建立。每個 pool 最小節點數仍為 0。控制服務使用一台 `e2-standard-4`，部署多個 targets 時需依 listeners 數量檢查 system node 容量。
+`max_runners` 是該 GitHub target 的 scale set 上限，也是 **同一規格／架構所有 node pools 的合計容量預算**。多個 targets 與磁碟 variants 競爭同一 pool；AMD64 與 ARM64 使用獨立 pools，不共用上限。依 CPU 2／4／8／16／32，AMD64 上限為 **16／24／32／24／24**（120 台），ARM64 為 **16／16／8／8／8**（56 台），合計最多 176 台 runner VM；只在有工作時建立。每個 pool 最小節點數仍為 0。控制服務預設使用一台 `e2-standard-4`；可用 `system_pool.node_count`／`system_pool.machine_type` 調整。啟用 variants 前必須依所有 targets 的 listeners 數量檢查 CPU、RAM 與每節點 pod 上限，詳見[營運手冊](docs/operations.md#disk-variant-rollout-and-measurement)。
 
 ```sh
 gcloud auth application-default login
