@@ -28,6 +28,90 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ctl.load_config(path)
 
+    def test_disk_variants_share_base_pools_and_do_not_change_runner_contract(self):
+        self.c["targets"]["protected"] = {**self.c["targets"]["example"], "scale_set_prefix": "gkp-"}
+        pools = ctl.node_pool_variants(self.c)
+        self.assertEqual(len(ctl.scale_set_variants(self.c)), 50)
+        for target in self.c["targets"]:
+            for profile, p in self.c["profiles"].items():
+                base = ctl.scale_values(self.c, target, profile)
+                for size in (64, 128, 256, 512):
+                    values = ctl.scale_values(self.c, target, profile, size)
+                    self.assertEqual(values["runnerScaleSetName"], base["runnerScaleSetName"] + f"-{size}gb")
+                    self.assertEqual(values["maxRunners"], p["max_runners"])
+                    pod = values["template"]["spec"]
+                    self.assertEqual(pod["nodeSelector"][ctl.PREFIX + "profile"], profile)
+                    self.assertEqual(
+                        pod["volumes"][0]["ephemeral"]["volumeClaimTemplate"]["spec"]["resources"]["requests"][
+                            "storage"
+                        ],
+                        f"{size}Gi",
+                    )
+                    env = next(e for e in pod["containers"][0]["env"] if e["name"] == "RUNNER_WORKSPACE_GIB")
+                    self.assertEqual(env["value"], str(size))
+                    # Only these two pod-template fields change. Required, cross-namespace
+                    # anti-affinity plus the unchanged pool maxima bound ALL active variants.
+                    env["value"] = "480"
+                    pod["volumes"][0]["ephemeral"]["volumeClaimTemplate"]["spec"]["resources"]["requests"][
+                        "storage"
+                    ] = "480Gi"
+                    self.assertEqual(values["template"], base["template"])
+        self.c.pop("workspace_variants_gib")
+        self.assertEqual(ctl.node_pool_variants(self.c), pools)
+
+    def test_target_default_flip_is_isolated_and_never_changes_explicit_variants(self):
+        profile = "gke-2cpu-4gb-amd64"
+        self.c["profiles"][profile]["workspace_gib"] = 640
+        self.c["targets"]["second"] = {**self.c["targets"]["example"], "workspace_gib": 32}
+        self.assertEqual(ctl.workspace_size(self.c, "example", profile), 640)
+        self.assertEqual(ctl.workspace_size(self.c, "second", profile), 32)
+        self.assertEqual(ctl.workspace_size(self.c, "example", "gke-2cpu-4gb-arm64"), 480)
+        for size in (64, 128, 256, 512):
+            self.assertEqual(ctl.workspace_size(self.c, "second", profile, size), size)
+
+    def test_invalid_variants_and_target_defaults_are_rejected(self):
+        for sizes in ([32], [64, 64], [True], ["64"], [480], "64"):
+            with self.subTest(sizes=sizes):
+                self.config_error(lambda c: c.update(workspace_variants_gib=sizes))
+        self.c = ctl.load_config(ROOT / "config.example.json")
+        self.config_error(lambda c: c["targets"]["example"].update(workspace_gib=True))
+
+    def test_variant_name_cannot_collide_with_another_base(self):
+        self.config_error(
+            lambda c: c["profiles"].update(
+                {"gke-2cpu-4gb-amd64-64gb": copy.deepcopy(c["profiles"]["gke-2cpu-4gb-amd64"])}
+            )
+        )
+
+    def test_add_only_installs_missing_releases_and_preserves_existing_drift(self):
+        profile = "gke-2cpu-4gb-amd64"
+        self.c["profiles"] = {profile: self.c["profiles"][profile]}
+        charts = {"gha-runner-scale-set": "pinned.tgz"}
+        with tempfile.TemporaryDirectory() as directory:
+            ctl.render(self.c, directory)
+            for plan_only in (True, False):
+                with patch.object(ctl, "kube"), patch.object(ctl, "run") as run:
+                    run.side_effect = [
+                        json.dumps([{"name": profile, "status": "deployed"}]),
+                        json.dumps(ctl.scale_values(self.c, "example", profile)),
+                        *([None] * 4),
+                    ]
+                    ctl.install_additions(self.c, directory, charts, plan_only)
+                    installs = [call.args[0] for call in run.call_args_list if call.args[0][1] == "install"]
+                    self.assertEqual(len(installs), 0 if plan_only else 4)
+                    self.assertFalse(any(call.args[0][1] == "upgrade" for call in run.call_args_list))
+            with patch.object(ctl, "kube"), patch.object(ctl, "run") as run:
+                run.side_effect = [json.dumps([{"name": profile, "status": "deployed"}]), "{}"]
+                ctl.install_additions(self.c, directory, charts, plan_only=True)
+                skipped = json.loads((Path(directory) / "skipped-existing.json").read_text())
+                self.assertTrue(skipped[0]["desired_values_differ"])
+                self.assertFalse(any(call.args[0][1] == "install" for call in run.call_args_list))
+            with patch.object(ctl, "kube"), patch.object(ctl, "run") as run:
+                run.return_value = json.dumps([{"name": profile, "status": "failed"}])
+                with self.assertRaisesRegex(ValueError, "not deployed"):
+                    ctl.install_additions(self.c, directory, charts)
+                self.assertFalse(any(call.args[0][1] == "install" for call in run.call_args_list))
+
     def test_requested_sizes_on_both_architectures(self):
         actual = {(p["architecture"], p["cpu"], p["memory_gib"]) for p in self.c["profiles"].values()}
         self.assertEqual(
@@ -340,9 +424,9 @@ class RunnerTests(unittest.TestCase):
         sets = [
             {
                 "metadata": {"name": "resource-" + str(i)},
-                "spec": {"runnerScaleSetName": ctl.scale_set_name(self.c["targets"]["example"], profile)},
+                "spec": {"runnerScaleSetName": ctl.scale_set_name(self.c["targets"]["example"], profile, size)},
             }
-            for i, profile in enumerate(self.c["profiles"])
+            for i, (profile, size) in enumerate(ctl.scale_set_variants(self.c).values())
         ]
         ctl.validate_scale_sets(self.c, "example", sets)
         sets[0]["spec"]["runnerScaleSetName"] = "wrong-name"
@@ -364,7 +448,7 @@ class RunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             ctl.render(self.c, directory)
             files = list(Path(directory).rglob("*.json"))
-            self.assertEqual(len(files), 27)
+            self.assertEqual(len(files), 107)
             for f in files:
                 self.assertNotIn("github_app_private_key", f.read_text())
             second = json.loads((Path(directory) / "second/gke-2cpu-4gb-arm64.json").read_text())

@@ -66,6 +66,24 @@ dedicated host boundary or reserved capacity. Dedicated target pools/taints are
 not enabled by this configuration; introduce real infrastructure and capacity
 allocation before claiming that stronger isolation.
 
+## Job-disk variants and target defaults
+
+Enable the top-level `workspace_variants_gib: [64, 128, 256, 512]` to add four
+scale sets per profile in every target namespace. Prefix replacement happens
+before the disk suffix: `gke-8cpu-16gb-amd64-256gb` becomes
+`gkp-8cpu-16gb-amd64-256gb` for a protected target. Each new release uses its
+base profile's node selector, taint toleration, images, CPU/RAM and capacity
+ceiling. There are no disk-specific node pools or additional runner-node budgets.
+
+Phase 1 keeps unsuffixed names at 480 GiB. A target's optional `workspace_gib`
+overrides the profile/global defaults for unsuffixed names only; explicit
+suffixes always keep their stated size. To flip one target later, change only
+`targets.NAME.workspace_gib` from `480` to `32`, render and review the affected
+scale sets, then upgrade those releases. New runner pods use 32 GiB; existing
+pods/PVCs keep their original capacity. Protected and general targets are
+separate settings. Route jobs needing more than 32 GiB to explicit suffixes
+before that target's flip.
+
 ## Pulling from a private Artifact Registry repository
 
 Declare each existing repository explicitly at the top level:

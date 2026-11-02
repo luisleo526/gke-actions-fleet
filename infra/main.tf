@@ -143,13 +143,13 @@ resource "google_container_node_pool" "system" {
   name       = "system"
   cluster    = google_container_cluster.runners.id
   location   = var.zone
-  node_count = 1
+  node_count = var.system_node_count
   management {
     auto_repair  = true
     auto_upgrade = true
   }
   node_config {
-    machine_type    = "e2-standard-4"
+    machine_type    = var.system_machine_type
     disk_size_gb    = 50
     disk_type       = "pd-balanced"
     image_type      = "COS_CONTAINERD"

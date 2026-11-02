@@ -207,5 +207,11 @@
       "allow_sudo": true
     }
   },
-  "workspace_gib": 480
+  "workspace_gib": 480,
+  "workspace_variants_gib": [
+    64,
+    128,
+    256,
+    512
+  ]
 }
