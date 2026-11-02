@@ -151,8 +151,9 @@ def load_config(path):
         allocated = 0
         seen = {(p["machine_type"], c["zone"])}
         for alternative in alternatives:
-            keys(alternative, ["machine_type", "max_nodes"], ["zone"])
+            keys(alternative, ["machine_type", "max_nodes"], ["zone", "spot"])
             integer(alternative["max_nodes"], 1, p["max_runners"], "alternative.max_nodes")
+            require(type(alternative.get("spot", False)) is bool, "alternative.spot must be a boolean")
             zone = alternative.get("zone", c["zone"])
             require(
                 isinstance(zone, str) and re.fullmatch(re.escape(c["region"]) + r"-[a-z]", zone),
@@ -231,7 +232,7 @@ def node_pool_variants(c):
             require(pool_name not in pools and pool_name not in c["profiles"], "Node pool name collision")
             pools[pool_name] = {
                 **primary,
-                "spot": False,
+                "spot": alternative.get("spot", False),
                 "machine_type": alternative["machine_type"],
                 "max_runners": alternative["max_nodes"],
                 "zone": alternative.get("zone", c["zone"]),

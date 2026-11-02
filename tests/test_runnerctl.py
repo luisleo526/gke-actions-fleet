@@ -38,18 +38,18 @@ class RunnerTests(unittest.TestCase):
     def test_capacity_limits_are_independent_for_each_architecture(self):
         for architecture in ["amd64", "arm64"]:
             limits = (
-                {2: 16, 4: 16, 8: 16, 16: 16, 32: 16} if architecture == "amd64" else {2: 16, 4: 16, 8: 8, 16: 8, 32: 8}
+                {2: 16, 4: 24, 8: 32, 16: 24, 32: 24} if architecture == "amd64" else {2: 16, 4: 16, 8: 8, 16: 8, 32: 8}
             )
             profiles = [p for p in self.c["profiles"].values() if p["architecture"] == architecture]
             self.assertEqual({p["cpu"]: p["max_runners"] for p in profiles}, limits)
-            self.assertEqual(sum(p["max_runners"] for p in profiles), 80 if architecture == "amd64" else 56)
+            self.assertEqual(sum(p["max_runners"] for p in profiles), 120 if architecture == "amd64" else 56)
 
     def test_machine_variants_share_one_profile_capacity_budget(self):
         pools = ctl.node_pool_variants(self.c)
-        self.assertEqual(len(pools), 20)
+        self.assertEqual(len(pools), 25)
         for profile_name, profile in self.c["profiles"].items():
             candidates = [p for p in pools.values() if p["profile_name"] == profile_name]
-            self.assertEqual(len(candidates), 2)
+            self.assertEqual(len(candidates), 3 if profile["architecture"] == "amd64" else 2)
             self.assertEqual(sum(p["max_runners"] for p in candidates), profile["max_runners"])
             self.assertEqual({p["architecture"] for p in candidates}, {profile["architecture"]})
         self.assertEqual(pools["gke-32cpu-64gb-arm64-alt1"]["zone"], "us-central1-b")
@@ -96,9 +96,41 @@ class RunnerTests(unittest.TestCase):
                 for name, profile in config["profiles"].items():
                     self.assertEqual(pools[name]["spot"], spot)
                     self.assertFalse(pools[name + "-alt1"]["spot"])
-                    self.assertEqual(
-                        pools[name]["max_runners"] + pools[name + "-alt1"]["max_runners"], profile["max_runners"]
-                    )
+                    candidates = [p for p in pools.values() if p["profile_name"] == name]
+                    self.assertEqual(sum(p["max_runners"] for p in candidates), profile["max_runners"])
+                    if profile["architecture"] == "amd64":
+                        self.assertTrue(pools[name + "-alt2"]["spot"])
+
+    def test_second_zone_spot_alternatives_keep_existing_fallbacks_and_selectors(self):
+        pools = ctl.node_pool_variants(self.c)
+        for name, profile in self.c["profiles"].items():
+            if profile["architecture"] == "arm64":
+                self.assertFalse(pools[name]["spot"])
+                continue
+            primary, fallback, second = (pools[name + suffix] for suffix in ("", "-alt1", "-alt2"))
+            self.assertTrue(primary["spot"])
+            self.assertFalse(fallback["spot"])
+            self.assertEqual(fallback["max_runners"], 8)
+            self.assertEqual(fallback["zone"], self.c["zone"])
+            self.assertTrue(second["spot"])
+            self.assertEqual(second["machine_type"], primary["machine_type"])
+            self.assertEqual(second["max_runners"], primary["max_runners"])
+            self.assertEqual(second["zone"], "us-central1-b")
+            self.assertEqual(second["profile_name"], name)
+
+    def test_alternative_spot_must_be_explicit_boolean(self):
+        for invalid in ("true", "false", 0, 1, None):
+            with self.subTest(spot=invalid):
+                self.config_error(lambda c: c["profiles"]["gke-2cpu-4gb-amd64"]["alternatives"][1].update(spot=invalid))
+
+    def test_alternative_can_explicitly_select_on_demand(self):
+        profile = "gke-2cpu-4gb-amd64"
+        self.c["profiles"][profile]["alternatives"][1]["spot"] = False
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(self.c))
+            config = ctl.load_config(path)
+            self.assertFalse(ctl.node_pool_variants(config)[profile + "-alt2"]["spot"])
 
     def test_pods_cannot_fall_back_to_wrong_node_or_control_plane(self):
         for name, profile in self.c["profiles"].items():

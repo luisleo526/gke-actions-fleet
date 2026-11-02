@@ -74,7 +74,7 @@ make setup
 
 編輯 `config.json`：填入 project、region、zone、實際管理者出口 IP 的 CIDR，以及 GitHub organization URL。範例的 `203.0.113.10/32` 是文件用位址，**必須更換**。預設 `us-central1-a` 同時提供 N2、T2A；更換區域前確認兩種機型可用性與 quota。保留需要的 profiles，可調整名稱、機型、Docker 開關與併發上限。
 
-`max_runners` 是該 GitHub target 的 scale set 上限，也是 **同一規格／架構所有 node pools 的合計容量預算**。多個 targets 競爭同一 pool；AMD64 與 ARM64 使用獨立 pools，不共用上限。依 CPU 2／4／8／16／32，AMD64 上限為 **16／16／16／16／16**（80 台），ARM64 為 **16／16／8／8／8**（56 台），合計最多 136 台 runner VM；只在有工作時建立。每個 pool 最小節點數仍為 0。控制服務使用一台 `e2-standard-4`，部署多個 targets 時需依 listeners 數量檢查 system node 容量。
+`max_runners` 是該 GitHub target 的 scale set 上限，也是 **同一規格／架構所有 node pools 的合計容量預算**。多個 targets 競爭同一 pool；AMD64 與 ARM64 使用獨立 pools，不共用上限。依 CPU 2／4／8／16／32，AMD64 上限為 **16／24／32／24／24**（120 台），ARM64 為 **16／16／8／8／8**（56 台），合計最多 176 台 runner VM；只在有工作時建立。每個 pool 最小節點數仍為 0。控制服務使用一台 `e2-standard-4`，部署多個 targets 時需依 listeners 數量檢查 system node 容量。
 
 ```sh
 gcloud auth application-default login
@@ -191,13 +191,16 @@ Repository secret 仍可用 `${{ secrets.NAME }}`；environment 的 secrets、va
   "max_runners": 16,
   "spot": true,
   "docker": true,
-  "alternatives": [{"machine_type": "n2d-standard-4", "max_nodes": 8}]
+  "alternatives": [
+    {"machine_type": "n2d-standard-4", "max_nodes": 8},
+    {"machine_type": "n2-custom-4-12288", "max_nodes": 4, "zone": "us-central1-b", "spot": true}
+  ]
 }
 ```
 
-此例主要 pool 使用 Spot、上限 8，替代 pool 保持 on-demand、上限 8，**加總 16**。`spot` 只控制主要 pool，AMD64 與 T2A ARM64 都接受；實際支援與容量依機型／zone 而定。替代 pool 一律使用 on-demand，autoscaler 的選擇順序需由日誌確認。`max_nodes` 是從同一份 profile budget 分配，不是額外增加。若某種機型無容量，只能使用其餘 pool 的配置額度；不會自動挪用其他 pool 的額度，因此不保證單一候選故障時仍能達到完整上限。需要調整配比時修改配置、檢查 plan 後套用。既有 pool 切換 Spot 會重建，必須先依[營運手冊](docs/operations.md#changing-a-primary-pools-provisioning-model)等待該 pool 完全歸零。
+此例主要 pool 使用 Spot、上限 4；alt2 在第二個 zone 使用同機型 Spot、上限 4；alt1 保持 on-demand、上限 8，**加總 16**。profile 的 `spot` 控制主要 pool，AMD64 與 T2A ARM64 都接受；alternative 的 `spot` 必須明確設為 `true` 才使用 Spot，省略時維持 on-demand。實際支援與容量依機型／zone 而定，autoscaler 的選擇順序需由日誌確認，alternatives 陣列順序不代表優先順序。`max_nodes` 是從同一份 profile budget 分配，不是額外增加。若某種機型無容量，只能使用其餘 pool 的配置額度；不會自動挪用其他 pool 的額度，因此不保證單一候選故障時仍能達到完整上限。需要調整配比時修改配置、檢查 plan 後套用。既有 pool 切換 Spot 會重建，必須先依[營運手冊](docs/operations.md#changing-a-primary-pools-provisioning-model)等待該 pool 完全歸零。
 
-範例 AMD64 使用 N2 custom + N2D；ARM64 使用不同 T2A 尺寸。16 CPU ARM 的替代 pool 與最大規格 ARM 的替代 pool 使用另一個 zone，降低單一 zone 的容量限制影響。額外 zone 必須位於相同 region 且有機型／quota。各機型都必須支援既有的 PD Balanced 工作磁碟；C4A 等僅支援 Hyperdisk 的系列不在目前候選清單中。完整候選加總滿載的 ARM 需求比只用主要機型更高，quota 必須按實際配置計算。
+範例 AMD64 在 zone a／b 平分 Spot 額度，保留每個 alt1 的 8 台 N2D on-demand 額度。依 CPU 2／4／8／16／32，primary／alt2／alt1 為 4／4／8、8／8／8、12／12／8、8／8／8、8／8／8。ARM64 使用不同 T2A 尺寸，主要與替代 pools 預設均為 on-demand；長於常見 Spot 存活時間的工作可避免中斷。16 CPU ARM 的替代 pool 與最大規格 ARM 的替代 pool 使用另一個 zone，降低單一 zone 的容量限制影響。額外 zone 必須位於相同 region 且有機型／quota。各機型都必須支援既有的 PD Balanced 工作磁碟；C4A 等僅支援 Hyperdisk 的系列不在目前候選清單中。完整候選加總滿載的 ARM 需求比只用主要機型更高，quota 必須按實際配置計算。
 
 ## 驗證
 

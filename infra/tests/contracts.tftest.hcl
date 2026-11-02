@@ -9,6 +9,7 @@ variables {
   profiles = {
     test-amd64      = { architecture = "amd64", machine_type = "n2-custom-4-12288", max_runners = 1, spot = true }
     test-amd64-alt1 = { architecture = "amd64", machine_type = "n2d-standard-4", max_runners = 1, spot = false, profile_name = "test-amd64", zone = "us-central1-b" }
+    test-amd64-alt2 = { architecture = "amd64", machine_type = "n2-custom-4-12288", max_runners = 1, spot = true, profile_name = "test-amd64", zone = "us-central1-c" }
     test-arm64      = { architecture = "arm64", machine_type = "t2a-standard-4", max_runners = 2, spot = true }
   }
 }
@@ -31,11 +32,11 @@ run "private_image_reader_is_repository_scoped" {
 run "one_cluster_with_zero_based_pools" {
   command = plan
   assert {
-    condition     = google_container_node_pool.runner["test-amd64"].node_config[0].spot && google_container_node_pool.runner["test-arm64"].node_config[0].spot && !google_container_node_pool.runner["test-amd64-alt1"].node_config[0].spot
-    error_message = "Both architectures must support Spot primaries while fallback pools remain on-demand."
+    condition     = google_container_node_pool.runner["test-amd64"].node_config[0].spot && google_container_node_pool.runner["test-arm64"].node_config[0].spot && !google_container_node_pool.runner["test-amd64-alt1"].node_config[0].spot && google_container_node_pool.runner["test-amd64-alt2"].node_config[0].spot
+    error_message = "Both architectures must support Spot primaries and explicit Spot alternatives alongside on-demand fallbacks."
   }
   assert {
-    condition     = length(google_container_node_pool.runner) == 3
+    condition     = length(google_container_node_pool.runner) == 4
     error_message = "Both architectures must share one cluster with distinct node pools."
   }
   assert {
@@ -45,6 +46,10 @@ run "one_cluster_with_zero_based_pools" {
   assert {
     condition     = google_container_node_pool.runner["test-amd64-alt1"].node_config[0].labels["gke-gh-runner.io/profile"] == "test-amd64" && google_container_node_pool.runner["test-amd64-alt1"].node_config[0].taint[0].value == "test-amd64" && contains(google_container_node_pool.runner["test-amd64-alt1"].node_locations, "us-central1-b")
     error_message = "Alternative machine/zone pools must remain schedulable through the original profile selector and taint."
+  }
+  assert {
+    condition     = google_container_node_pool.runner["test-amd64-alt2"].node_config[0].labels["gke-gh-runner.io/profile"] == "test-amd64" && google_container_node_pool.runner["test-amd64-alt2"].node_config[0].taint[0].value == "test-amd64" && contains(google_container_node_pool.runner["test-amd64-alt2"].node_locations, "us-central1-c")
+    error_message = "Second-zone Spot alternatives must retain the original profile selector and taint."
   }
   assert {
     condition     = google_container_node_pool.system.node_count == 1 && google_container_node_pool.system.node_config[0].labels["gke-gh-runner.io/pool"] == "system"
