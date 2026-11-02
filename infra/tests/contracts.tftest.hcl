@@ -7,9 +7,9 @@ variables {
   cluster_name = "test-runners"
   admin_cidrs  = ["203.0.113.10/32"]
   profiles = {
-    test-amd64      = { architecture = "amd64", machine_type = "n2-custom-4-12288", max_runners = 1, spot = false }
+    test-amd64      = { architecture = "amd64", machine_type = "n2-custom-4-12288", max_runners = 1, spot = true }
     test-amd64-alt1 = { architecture = "amd64", machine_type = "n2d-standard-4", max_runners = 1, spot = false, profile_name = "test-amd64", zone = "us-central1-b" }
-    test-arm64      = { architecture = "arm64", machine_type = "t2a-standard-4", max_runners = 2, spot = false }
+    test-arm64      = { architecture = "arm64", machine_type = "t2a-standard-4", max_runners = 2, spot = true }
   }
 }
 
@@ -30,6 +30,10 @@ run "private_image_reader_is_repository_scoped" {
 
 run "one_cluster_with_zero_based_pools" {
   command = plan
+  assert {
+    condition     = google_container_node_pool.runner["test-amd64"].node_config[0].spot && google_container_node_pool.runner["test-arm64"].node_config[0].spot && !google_container_node_pool.runner["test-amd64-alt1"].node_config[0].spot
+    error_message = "Both architectures must support Spot primaries while fallback pools remain on-demand."
+  }
   assert {
     condition     = length(google_container_node_pool.runner) == 3
     error_message = "Both architectures must share one cluster with distinct node pools."

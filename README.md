@@ -189,13 +189,13 @@ Repository secret 仍可用 `${{ secrets.NAME }}`；environment 的 secrets、va
   "cpu": 2,
   "memory_gib": 4,
   "max_runners": 16,
-  "spot": false,
+  "spot": true,
   "docker": true,
   "alternatives": [{"machine_type": "n2d-standard-4", "max_nodes": 8}]
 }
 ```
 
-此例主要 pool 上限 8、替代 pool 上限 8，**加總 16**。`max_nodes` 是從同一份 profile budget 分配，不是額外增加。若某種機型無容量，只能使用其餘 pool 的配置額度；不會自動挪用其他 pool 的額度，因此不保證單一候選故障時仍能達到完整上限。需要調整配比時修改配置、檢查 plan 後套用。
+此例主要 pool 使用 Spot、上限 8，替代 pool 保持 on-demand、上限 8，**加總 16**。`spot` 只控制主要 pool，AMD64 與 T2A ARM64 都接受；實際支援與容量依機型／zone 而定。替代 pool 一律使用 on-demand，autoscaler 的選擇順序需由日誌確認。`max_nodes` 是從同一份 profile budget 分配，不是額外增加。若某種機型無容量，只能使用其餘 pool 的配置額度；不會自動挪用其他 pool 的額度，因此不保證單一候選故障時仍能達到完整上限。需要調整配比時修改配置、檢查 plan 後套用。既有 pool 切換 Spot 會重建，必須先依[營運手冊](docs/operations.md#changing-a-primary-pools-provisioning-model)等待該 pool 完全歸零。
 
 範例 AMD64 使用 N2 custom + N2D；ARM64 使用不同 T2A 尺寸。16 CPU ARM 的替代 pool 與最大規格 ARM 的替代 pool 使用另一個 zone，降低單一 zone 的容量限制影響。額外 zone 必須位於相同 region 且有機型／quota。各機型都必須支援既有的 PD Balanced 工作磁碟；C4A 等僅支援 Hyperdisk 的系列不在目前候選清單中。完整候選加總滿載的 ARM 需求比只用主要機型更高，quota 必須按實際配置計算。
 

@@ -83,8 +83,22 @@ class RunnerTests(unittest.TestCase):
     def test_repository_group_is_rejected(self):
         self.config_error(lambda c: c["targets"]["example"].update(github_url="https://github.com/org/repo"))
 
-    def test_t2a_spot_rejected(self):
-        self.config_error(lambda c: c["profiles"]["gke-2cpu-4gb-arm64"].update(spot=True))
+    def test_spot_primaries_keep_on_demand_fallbacks_on_both_architectures(self):
+        for spot in (False, True):
+            with self.subTest(spot=spot), tempfile.TemporaryDirectory() as directory:
+                for profile in self.c["profiles"].values():
+                    profile["spot"] = spot
+                path = Path(directory) / "config.json"
+                path.write_text(json.dumps(self.c))
+                config = ctl.load_config(path)
+                ctl.render(config, Path(directory) / "rendered")
+                pools = json.loads((Path(directory) / "rendered/terraform.tfvars.json").read_text())["profiles"]
+                for name, profile in config["profiles"].items():
+                    self.assertEqual(pools[name]["spot"], spot)
+                    self.assertFalse(pools[name + "-alt1"]["spot"])
+                    self.assertEqual(
+                        pools[name]["max_runners"] + pools[name + "-alt1"]["max_runners"], profile["max_runners"]
+                    )
 
     def test_pods_cannot_fall_back_to_wrong_node_or_control_plane(self):
         for name, profile in self.c["profiles"].items():

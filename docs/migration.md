@@ -49,7 +49,7 @@ Workspace plus Docker images/build layers have **480 GiB total per job**. Large 
 - DinD uses a private Docker daemon per runner. Service containers with published ports are reachable from shell steps at `localhost`; Docker job containers reach services through their Docker network. Validate workflows that assume host Docker socket paths or `--network=host`.
 - Images using privileged DinD share a node trust boundary. Restrict repos/workflows by runner groups and avoid exposing this cluster to arbitrary fork code. Use separate infrastructure for hostile tenants.
 - Private-cluster APIs and RFC1918 endpoints are blocked from runner pods by default. Explicitly design any required access; do not loosen all egress to make one deployment work. GitHub OIDC to public cloud APIs is the expected deployment authentication path.
-- Pod lifetime is capped at 22,500 seconds, including scheduling/startup. Keep workflow timeouts at or below six hours and account for cold starts. Validate retry-safe jobs before enabling Spot; T2A profiles use on-demand VMs.
+- Pod lifetime is capped at 22,500 seconds, including scheduling/startup. Keep workflow timeouts at or below six hours and account for cold starts. Validate retry-safe jobs before enabling Spot. Both AMD64 and T2A ARM64 primary pools accept `spot: true`; alternative pools remain on-demand. Spot availability depends on the machine type and zone.
 
 ## Rollout and rollback
 
