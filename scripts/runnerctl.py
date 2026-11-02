@@ -674,7 +674,24 @@ def install_additions(c, out, charts, plan_only=False):
         ns = namespace(target)
         kube(c, ["get", "secret", c["targets"][target]["github_secret"], "-n", ns], capture=True)
         releases = json.loads(
-            run(["helm", "list", "--all", "--kube-context", context(c), "-n", ns, "-o", "json"], capture=True)
+            run(
+                [
+                    "helm",
+                    "list",
+                    "--deployed",
+                    "--failed",
+                    "--pending",
+                    "--uninstalling",
+                    "--uninstalled",
+                    "--kube-context",
+                    context(c),
+                    "-n",
+                    ns,
+                    "-o",
+                    "json",
+                ],
+                capture=True,
+            )
         )
         existing = {r["name"]: r for r in releases}
         for release in scale_set_variants(c):
