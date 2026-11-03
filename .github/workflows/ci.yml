@@ -27,3 +27,4 @@ jobs:
       - run: tofu -chdir=infra init -backend=false -input=false -lockfile=readonly
       - run: tofu -chdir=infra validate && tofu -chdir=infra test
       - run: python scripts/verify_charts.py
+      - run: python scripts/verify_charts.py --config tests/fixtures/protected-on-demand.json --out build/validation-protected

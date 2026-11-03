@@ -43,7 +43,7 @@ def verify(c, out):
             capture=True,
         )
         for target in c["targets"]:
-            for name, (base, size) in ctl.scale_set_variants(c).items():
+            for name, (base, size) in ctl.scale_set_variants(c, target).items():
                 profile = c["profiles"][base]
                 rendered = ctl.run(
                     [

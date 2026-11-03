@@ -1,5 +1,23 @@
 mock_provider "google" {}
 
+run "dedicated_on_demand_pools_scale_from_zero_across_zones" {
+  command = plan
+  variables {
+    profiles = {
+      gke-od-8cpu-16gb-amd64      = { architecture = "amd64", machine_type = "n2d-custom-16-24576", max_runners = 2, spot = false }
+      gke-od-8cpu-16gb-amd64-alt1 = { architecture = "amd64", machine_type = "n2d-custom-16-24576", max_runners = 2, spot = false, profile_name = "gke-od-8cpu-16gb-amd64", zone = "us-central1-b" }
+    }
+  }
+  assert {
+    condition     = alltrue([for p in google_container_node_pool.runner : !p.node_config[0].spot && p.initial_node_count == 0 && p.autoscaling[0].total_min_node_count == 0 && p.autoscaling[0].total_max_node_count == 2 && p.node_config[0].labels["gke-gh-runner.io/profile"] == "gke-od-8cpu-16gb-amd64"])
+    error_message = "Release pools must have dedicated selectors, on-demand provisioning and zero resident nodes."
+  }
+  assert {
+    condition     = google_container_node_pool.runner["gke-od-8cpu-16gb-amd64"].node_locations == toset(["us-central1-a"]) && google_container_node_pool.runner["gke-od-8cpu-16gb-amd64-alt1"].node_locations == toset(["us-central1-b"])
+    error_message = "Release capacity must span two zones with one bounded budget."
+  }
+}
+
 run "system_capacity_is_configurable_without_extra_runner_pools" {
   command = plan
   variables {

@@ -46,7 +46,7 @@ flowchart LR
 
 預設每個 job 使用 **480 GiB PD Balanced**，workspace、工具快取與 Docker data 共用。設定 `workspace_variants_gib: [64, 128, 256, 512]` 後，每個 profile／target 另外建立 `-64gb`、`-128gb`、`-256gb`、`-512gb` scale sets，例如 `gke-8cpu-16gb-amd64-256gb` 或 `gkp-32cpu-64gb-arm64-512gb`。沒有尾綴的名稱在第一階段仍使用 480 GiB；不建立 `-32gb`，之後各 target 才分別將無尾綴預設改成 32 GiB。
 
-明確尾綴固定容量；無尾綴依序使用 `targets.NAME.workspace_gib`、`profiles.NAME.workspace_gib`、全域 `workspace_gib`，最後回退至 480 GiB。預設值接受 10–16384 的整數 GiB。新增 variants 不新增 node pools，也不增加 profile 的合計容量預算。各 scale set 的 `maxRunners` 沿用 base ceiling；既有 pool maxima 加上跨 namespace 的每節點一個 runner 規則限制所有 target／磁碟 variants 的合計執行量。ARC 仍可能建立等待容量的 Pending pods；這不是跨 scale set 的 GitHub queue 上限。
+明確尾綴固定容量；無尾綴依序使用 `targets.NAME.workspace_gib`、`profiles.NAME.workspace_gib`、全域 `workspace_gib`，最後回退至 480 GiB。預設值接受 10–16384 的整數 GiB。profile 可用 `workspace_variants_gib` 覆寫全域 variants（例如 `[128]` 只加 `-128gb`，`[]` 只保留無尾綴）；省略時沿用全域。新增 variants 不新增 node pools，也不增加 profile 的合計容量預算。各 scale set 的 `maxRunners` 沿用 base ceiling；既有 pool maxima 加上跨 namespace 的每節點一個 runner 規則限制所有 target／磁碟 variants 的合計執行量。ARC 仍可能建立等待容量的 Pending pods；這不是跨 scale set 的 GitHub queue 上限。
 
 ```json
 {
@@ -206,6 +206,42 @@ Repository secret 仍可用 `${{ secrets.NAME }}`；environment 的 secrets、va
 此例主要 pool 與 alt2／alt3／alt4 各有 2 台 Spot 額度，橫跨 N2／N2D／E2 與 a／b／c／f 四個 zones；alt1 保持 on-demand、上限 8，**加總 16**。profile 的 `spot` 控制主要 pool，AMD64 與 T2A ARM64 都接受；alternative 的 `spot` 必須明確設為 `true` 才使用 Spot，省略時維持 on-demand。實際支援與容量依機型／zone 而定，autoscaler 的選擇順序需由日誌確認，alternatives 陣列順序不代表優先順序。`max_nodes` 是從同一份 profile budget 分配，不是額外增加。若某種機型無容量，只能使用其餘 pool 的配置額度；不會自動挪用其他 pool 的額度，因此不保證單一候選故障時仍能達到完整上限。需要調整配比時修改配置、檢查 plan 後套用。既有 pool 切換 Spot 會重建，必須先依[營運手冊](docs/operations.md#changing-a-primary-pools-provisioning-model)等待該 pool 完全歸零。
 
 範例 AMD64 將 Spot 額度分成四份：N2 custom 在 a／b、N2D custom 在 c、E2 custom 在 f。32 CPU runner 加上 DinD／GKE 餘裕超過 E2 的 32 vCPU 上限，因此該規格的 f pool 也使用 N2D custom。依 CPU 2／4／8／16／32，每個 Spot pool 上限為 2／4／6／4／4，另保留每個 alt1 的 8 台 N2D on-demand 額度。N2D custom 的 vCPU 數只能選 2／4／8／16 或 32–96 間的 16 倍數；E2 custom 接受 2–32 的偶數；兩者與 N2 custom 的記憶體均須為 256 MiB 的倍數、每 vCPU 0.5–8 GiB，且通過 runner 資源餘裕檢查。不接受 extended-memory 或 shared-core custom shapes。ARM64 使用不同 T2A 尺寸，主要與替代 pools 預設均為 on-demand；長於常見 Spot 存活時間的工作可避免中斷。16 CPU ARM 的替代 pool 與最大規格 ARM 的替代 pool 使用另一個 zone，降低單一 zone 的容量限制影響。額外 zone 必須位於相同 region 且有機型／quota。各機型都必須支援既有的 PD Balanced 工作磁碟；C4A 等僅支援 Hyperdisk 的系列不在目前候選清單中。完整候選加總滿載的 ARM 需求比只用主要機型更高，quota 必須按實際配置計算。
+
+## Release 專用 on-demand AMD64
+
+profile 可設定 `targets: ["teamsync-protected", "pineforge-protected"]`，只在指定 targets 建立 scale sets／listeners。省略此欄位仍部署至所有 targets；未知 target、空清單、重複名稱會驗證失敗。這是部署範圍，存取授權仍由 GitHub runner group 的 repository／workflow allowlist 控制；安裝工具不會修改 allowlist。
+
+下列可選規格使用獨立的 on-demand N2D pools，主 pool 在 `us-central1-a`，唯一 alternative 在 `us-central1-b`；兩者均 `spot: false`、min=0。既有 Spot profiles、on-demand fallbacks 與 ARM64 維持原設定。名稱在 protected targets 轉為 `gkp-od-*`：
+
+| Protected `runs-on` label | N2D 機型（兩個 zone 相同） | 主／alt1 上限 | 合計 |
+|---|---|---:|---:|
+| `gkp-od-4cpu-8gb-amd64` | `n2d-custom-8-16384` | 2／2 | 4 |
+| `gkp-od-8cpu-16gb-amd64` | `n2d-custom-16-24576` | 2／2 | 4 |
+| `gkp-od-16cpu-32gb-amd64` | `n2d-custom-32-45056` | 3／3 | 6 |
+| `gkp-od-32cpu-64gb-amd64` | `n2d-custom-48-77824` | 3／3 | 6 |
+
+例如將此項加入既有 `profiles`，並保留已設定 `runner_group: "gke-protected"` 與 `scale_set_prefix: "gkp-"` 的兩個 targets：
+
+```json
+"gke-od-8cpu-16gb-amd64": {
+  "architecture": "amd64",
+  "machine_type": "n2d-custom-16-24576",
+  "cpu": 8,
+  "memory_gib": 16,
+  "max_runners": 4,
+  "spot": false,
+  "docker": true,
+  "targets": ["teamsync-protected", "pineforge-protected"],
+  "workspace_variants_gib": [128],
+  "alternatives": [
+    {"machine_type": "n2d-custom-16-24576", "zone": "us-central1-b", "max_nodes": 2, "spot": false}
+  ]
+}
+```
+
+以上採每個 profile 的 `[128]` override：每個 protected target 有四個無尾綴與四個 `-128gb` labels，共新增 16 listeners；無尾綴仍依 target 預設容量。最長 `gkp-od-32cpu-64gb-amd64-128gb` 為 29 字元，低於 45 字元限制。若 system pool 有充足餘裕，可省略 override 以沿用四種磁碟尾綴，共新增 40 listeners；需先量測 CPU requests、RAM、每節點 pod slots 與分布，見[營運手冊](docs/operations.md#protected-on-demand-rollout)。
+
+工作使用 `runs-on: {group: gke-protected, labels: gkp-od-32cpu-64gb-amd64-128gb}`，只應配置於該 group 已授權的 release／deploy workflows。on-demand 避免 Spot 回收，仍受區域 quota、zone 庫存、維護及故障影響；兩個 zone 各有固定額度，不會自動借用另一個 pool 的上限。完整四種 profiles 與四個 targets 的離線驗證範例見 [test fixture](tests/fixtures/protected-on-demand.json)。
 
 ## 驗證
 

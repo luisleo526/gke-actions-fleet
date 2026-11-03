@@ -1,0 +1,148 @@
+{
+  "project_id": "your-gcp-project",
+  "region": "us-central1",
+  "zone": "us-central1-a",
+  "cluster_name": "github-runners",
+  "admin_cidrs": [
+    "203.0.113.10/32"
+  ],
+  "workspace_variants_gib": [
+    64,
+    128,
+    256,
+    512
+  ],
+  "targets": {
+    "teamsync": {
+      "github_url": "https://github.com/YOUR-ORG",
+      "github_secret": "github-app",
+      "runner_group": "gke-runners"
+    },
+    "teamsync-protected": {
+      "github_url": "https://github.com/YOUR-ORG",
+      "github_secret": "github-app",
+      "runner_group": "gke-protected",
+      "scale_set_prefix": "gkp-",
+      "workspace_gib": 32
+    },
+    "pineforge": {
+      "github_url": "https://github.com/OTHER-ORG",
+      "github_secret": "github-app",
+      "runner_group": "gke-runners"
+    },
+    "pineforge-protected": {
+      "github_url": "https://github.com/OTHER-ORG",
+      "github_secret": "github-app",
+      "runner_group": "gke-protected",
+      "scale_set_prefix": "gkp-",
+      "workspace_gib": 32
+    }
+  },
+  "profiles": {
+    "gke-2cpu-4gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2-custom-4-12288",
+      "cpu": 2,
+      "memory_gib": 4,
+      "max_runners": 16,
+      "spot": true,
+      "docker": true
+    },
+    "gke-od-4cpu-8gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2d-custom-8-16384",
+      "cpu": 4,
+      "memory_gib": 8,
+      "max_runners": 4,
+      "spot": false,
+      "docker": true,
+      "targets": [
+        "teamsync-protected",
+        "pineforge-protected"
+      ],
+      "workspace_variants_gib": [
+        128
+      ],
+      "alternatives": [
+        {
+          "machine_type": "n2d-custom-8-16384",
+          "zone": "us-central1-b",
+          "max_nodes": 2,
+          "spot": false
+        }
+      ]
+    },
+    "gke-od-8cpu-16gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2d-custom-16-24576",
+      "cpu": 8,
+      "memory_gib": 16,
+      "max_runners": 4,
+      "spot": false,
+      "docker": true,
+      "targets": [
+        "teamsync-protected",
+        "pineforge-protected"
+      ],
+      "workspace_variants_gib": [
+        128
+      ],
+      "alternatives": [
+        {
+          "machine_type": "n2d-custom-16-24576",
+          "zone": "us-central1-b",
+          "max_nodes": 2,
+          "spot": false
+        }
+      ]
+    },
+    "gke-od-16cpu-32gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2d-custom-32-45056",
+      "cpu": 16,
+      "memory_gib": 32,
+      "max_runners": 6,
+      "spot": false,
+      "docker": true,
+      "targets": [
+        "teamsync-protected",
+        "pineforge-protected"
+      ],
+      "workspace_variants_gib": [
+        128
+      ],
+      "alternatives": [
+        {
+          "machine_type": "n2d-custom-32-45056",
+          "zone": "us-central1-b",
+          "max_nodes": 3,
+          "spot": false
+        }
+      ]
+    },
+    "gke-od-32cpu-64gb-amd64": {
+      "architecture": "amd64",
+      "machine_type": "n2d-custom-48-77824",
+      "cpu": 32,
+      "memory_gib": 64,
+      "max_runners": 6,
+      "spot": false,
+      "docker": true,
+      "targets": [
+        "teamsync-protected",
+        "pineforge-protected"
+      ],
+      "workspace_variants_gib": [
+        128
+      ],
+      "alternatives": [
+        {
+          "machine_type": "n2d-custom-48-77824",
+          "zone": "us-central1-b",
+          "max_nodes": 3,
+          "spot": false
+        }
+      ]
+    }
+  }
+}
