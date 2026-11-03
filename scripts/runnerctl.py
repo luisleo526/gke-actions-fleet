@@ -109,11 +109,14 @@ def scale_set_name(target, profile_name, workspace_gib=None):
     return result
 
 
-def scale_set_variants(c):
+def scale_set_variants(c, target=None):
     """Helm release -> (base profile, optional explicit disk size); never node pools."""
     variants = {}
-    for profile in c["profiles"]:
-        for size in (None, *c.get("workspace_variants_gib", [])):
+    for profile, settings in c["profiles"].items():
+        if target is not None and target not in settings.get("targets", c["targets"]):
+            continue
+        sizes = settings.get("workspace_variants_gib", c.get("workspace_variants_gib", []))
+        for size in (None, *sizes):
             release = scale_set_name({}, profile, size)
             require(release not in variants, "Scale-set release name collision")
             variants[release] = (profile, size)
@@ -130,8 +133,17 @@ def workspace_size(c, target, profile, variant_gib=None):
 
 def validate_scale_sets(c, target, sets):
     actual = {s["spec"].get("runnerScaleSetName", s["metadata"]["name"]) for s in sets}
-    expected = {scale_set_name(c["targets"][target], p, size) for p, size in scale_set_variants(c).values()}
+    expected = {scale_set_name(c["targets"][target], p, size) for p, size in scale_set_variants(c, target).values()}
     require(actual == expected, f"{namespace(target)}: installed scale sets differ from configuration")
+
+
+def validate_workspace_variants(variants):
+    require(isinstance(variants, list), "workspace_variants_gib must be a list")
+    require(
+        all(type(size) is int and size in WORKSPACE_VARIANTS_GIB for size in variants),
+        "workspace_variants_gib supports only 64, 128, 256, 512 GiB",
+    )
+    require(len(set(variants)) == len(variants), "Duplicate workspace variant")
 
 
 def load_config(path):
@@ -144,13 +156,7 @@ def load_config(path):
     if "runner_image" in c:
         validate_runner_image(c["runner_image"])
     integer(c.get("workspace_gib", DEFAULT_WORKSPACE_GIB), 10, 16384, "workspace_gib")
-    variants = c.get("workspace_variants_gib", [])
-    require(isinstance(variants, list), "workspace_variants_gib must be a list")
-    require(
-        all(type(size) is int and size in WORKSPACE_VARIANTS_GIB for size in variants),
-        "workspace_variants_gib supports only 64, 128, 256, 512 GiB",
-    )
-    require(len(set(variants)) == len(variants), "Duplicate workspace variant")
+    validate_workspace_variants(c.get("workspace_variants_gib", []))
     system = c.get("system_pool", {})
     keys(system, [], ["node_count", "machine_type"])
     integer(system.get("node_count", 1), 1, 20, "system_pool.node_count")
@@ -174,14 +180,23 @@ def load_config(path):
         require(
             network.version == 4 and network.prefixlen >= 8, "Use explicit IPv4 administrator CIDRs of /8 or narrower"
         )
+    require(isinstance(c["targets"], dict) and c["targets"], "targets must not be empty")
     require(isinstance(c["profiles"], dict) and c["profiles"], "profiles must not be empty")
     for profile_name, p in c["profiles"].items():
         name(profile_name)
         keys(
             p,
             ["architecture", "machine_type", "cpu", "memory_gib", "max_runners", "spot", "docker"],
-            ["alternatives", "allow_sudo", "workspace_gib"],
+            ["alternatives", "allow_sudo", "workspace_gib", "workspace_variants_gib", "targets"],
         )
+        if "targets" in p:
+            targets = p["targets"]
+            require(isinstance(targets, list) and targets, "profile.targets must be a non-empty list")
+            require(all(isinstance(t, str) for t in targets), "profile.targets must contain target names")
+            require(len(set(targets)) == len(targets), "Duplicate profile target")
+            require(all(t in c["targets"] for t in targets), f"{profile_name}: Unknown profile target")
+        if "workspace_variants_gib" in p:
+            validate_workspace_variants(p["workspace_variants_gib"])
         require(type(p.get("allow_sudo", True)) is bool, "allow_sudo must be a boolean")
         integer(
             p.get("workspace_gib", c.get("workspace_gib", DEFAULT_WORKSPACE_GIB)), 10, 16384, "profile.workspace_gib"
@@ -207,7 +222,6 @@ def load_config(path):
             validate_machine(profile_name, p, alternative["machine_type"])
             allocated += alternative["max_nodes"]
         require(allocated < p["max_runners"], "Alternative budgets must leave at least one primary node slot")
-    require(isinstance(c["targets"], dict) and c["targets"], "targets must not be empty")
     names_by_url = {}
     for target_name, target in c["targets"].items():
         name(target_name)
@@ -228,8 +242,9 @@ def load_config(path):
             "Use a github.com organization or repository URL without a trailing slash",
         )
         normalized = target["github_url"].lower()
-        target_names = {scale_set_name(target, p, size) for p, size in scale_set_variants(c).values()}
-        require(len(target_names) == len(scale_set_variants(c)), "Target scale-set name collision")
+        variants = scale_set_variants(c, target_name)
+        target_names = {scale_set_name(target, p, size) for p, size in variants.values()}
+        require(len(target_names) == len(variants), "Target scale-set name collision")
         existing_names = names_by_url.setdefault(normalized, set())
         require(
             not existing_names.intersection(target_names),
@@ -583,7 +598,7 @@ def render(c, out):
     for target in c["targets"]:
         write_json(out / target / "namespace.json", namespace_manifest(target))
         write_json(out / target / "network-policy.json", network_policy(target))
-        for release, (profile, size) in scale_set_variants(c).items():
+        for release, (profile, size) in scale_set_variants(c, target).items():
             write_json(out / target / f"{release}.json", scale_values(c, target, profile, size))
 
 
@@ -654,7 +669,7 @@ def install(c, out, add_only=False, plan_only=False):
     )
     for target in c["targets"]:
         apply_json(c, network_policy(target))
-        for release in scale_set_variants(c):
+        for release in scale_set_variants(c, target):
             run(
                 [
                     "helm",
@@ -700,7 +715,7 @@ def install_additions(c, out, charts, plan_only=False):
             )
         )
         existing = {r["name"]: r for r in releases}
-        for release in scale_set_variants(c):
+        for release in scale_set_variants(c, target):
             path = Path(out) / target / f"{release}.json"
             if release in existing:
                 require(existing[release]["status"] == "deployed", f"{ns}/{release}: release is not deployed")

@@ -20,6 +20,7 @@ test:
 	$(TOFU) -chdir=infra test
 charts:
 	$(PYTHON) scripts/verify_charts.py
+	$(PYTHON) scripts/verify_charts.py --config tests/fixtures/protected-on-demand.json --out build/validation-protected
 plan: render
 	$(TOFU) -chdir=infra init -input=false
 	$(TOFU) -chdir=infra plan -var-file=../build/terraform.tfvars.json -out=runner.tfplan

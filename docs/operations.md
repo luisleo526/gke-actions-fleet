@@ -100,6 +100,22 @@ Jobs shorter than the sampling interval can be missed, idle runner pods can
 be counted, and peaks between samples are lower bounds; use this as sizing
 evidence with headroom, not a complete job audit.
 
+## Protected on-demand rollout
+
+Release 專用 profiles 使用 `targets` 限定 protected namespaces，省略時維持部署至全部 targets。設定需引用已存在的 target 名稱；未知名稱會在 render／install 前失敗。`workspace_variants_gib` 可在 profile 覆寫全域清單，`[]` 只建立無尾綴。這些欄位不傳入 OpenTofu；`node_pool_variants` 只輸出機型、架構、Spot、zone 與 pool 預算，因此 target／disk variants 不會增加 node pools。
+
+採用 README 的四種 N2D custom shapes 時，a／b 各建立一個獨立 pool：4cpu、8cpu 各分 2+2；16cpu、32cpu 各分 3+3。八個 pools 均為 on-demand、initial=0、total_min=0，profile 合計為 20 台。新增 N2D vCPU ceiling 為 `4×8 + 4×16 + 6×32 + 6×48 = 576`。既有 N2D on-demand 864 加為 1,440；保守再計入既有 N2D Spot 648 為 2,088。N2 Spot 616 與 PREEMPTIBLE_CPUS 1,428 不變。這是 fleet 設定上限；套用前仍需讀取 us-central1 當下 quota usage／limit，納入其他服務。使用 `[128]` override 且 protected targets 預設 32Gi 時，新增 SSD ceiling 為 `20×(30+128)=3,160 GB`，既有 95,592 加為 98,752 GB；保留刪除延遲餘裕。
+
+先量測 system pool 每節點的 allocatable、pod requests、metrics 與剩餘 pod slots，尤其注意 CPU／pod slots 分散在不同節點時不可合併使用。四種 profiles × 五個 disk variants × 兩個 targets 為 40 listeners，新增 requests 720m CPU／1,536Mi RAM；若餘裕不充足，四個 profiles 都設定 `[128]`，只新增 16 listeners、480m CPU／768Mi RAM。保留所有既有 listeners requests 與 system pool 設定，避免為此變更滾動常駐服務。
+
+1. 備份本機設定／state 並記錄既有 pools、scale-set UIDs／specs、Helm revisions、listeners 與執行中 runner 的 metadata。檢查四個 profiles 僅引用兩個 protected targets，且所有候選 `spot: false`。不要修改既有 runner group／GitHub App／allowlist。
+2. 從已通過 CI 並 merge 的 main render。先 plan 再 apply；pool 計畫只能新增八個 runner pools，不得變更 cluster、system、IAM 或既有 pools。若有他人暫時的 live drift，僅在協調過的情況下用新 pools 的明確 `-target` 儲存／檢查計畫；不要套用還原他人 drift 的全量計畫。
+3. 執行 `install --add-only --plan-only`，確認只有兩個 protected namespaces 的新增 releases。檢查既有 values 差異記錄，但不升級它們；檢查固定 chart、group、OD selector、minRunners=0、明確磁碟容量，再執行 `install --add-only`。
+4. 讀回八個 pools 的 spot/preemptible=false、zone、min=0、max；確認一般 targets set count 不變，新增 protected listeners 全部 Ready。比對既有 ARS UIDs／specs／Helm revisions、listener UIDs、runner restarts 與事件，追查任何 job 終止。最後執行完整 no-op OpenTofu plan 與空 additions plan。
+5. 僅在 protected group 已允許且已有無副作用模式的 workflow 執行真實 job；由 job→pod→node→Compute VM 核對 profile、`cloud.google.com/gke-provisioning=standard` 與 VM scheduling。不可為了驗證擴大 group allowlist；沒有合適的現成入口時將 job proof 交給 release workflow 維護者。
+
+回退時先讓 workflows 停用新 labels，等待新 profiles 的 runner 工作自然完成。移除這 16 個新增 Helm releases，保留 controller 與所有舊 releases；確認 OD runner pods／PVCs／磁碟與 backing MIGs 歸零後，從設定移除四個 profiles，render 並檢查只刪除八個 OD pools 的 saved plan，再 apply。不要回存舊 Terraform state，也不要 drain／evict 工作。`install` 不會自動 prune 已移除的 profiles／targets；縮小 `targets` 前也須依此處理不再部署的 releases。
+
 ## Troubleshooting
 
 | Symptom | Check |
