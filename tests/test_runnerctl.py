@@ -130,10 +130,10 @@ class RunnerTests(unittest.TestCase):
 
     def test_machine_variants_share_one_profile_capacity_budget(self):
         pools = ctl.node_pool_variants(self.c)
-        self.assertEqual(len(pools), 25)
+        self.assertEqual(len(pools), 35)
         for profile_name, profile in self.c["profiles"].items():
             candidates = [p for p in pools.values() if p["profile_name"] == profile_name]
-            self.assertEqual(len(candidates), 3 if profile["architecture"] == "amd64" else 2)
+            self.assertEqual(len(candidates), 5 if profile["architecture"] == "amd64" else 2)
             self.assertEqual(sum(p["max_runners"] for p in candidates), profile["max_runners"])
             self.assertEqual({p["architecture"] for p in candidates}, {profile["architecture"]})
         self.assertEqual(pools["gke-32cpu-64gb-arm64-alt1"]["zone"], "us-central1-b")
@@ -157,6 +157,44 @@ class RunnerTests(unittest.TestCase):
 
     def test_invalid_custom_machine_rejected(self):
         self.config_error(lambda c: c["profiles"]["gke-32cpu-64gb-amd64"].update(machine_type="n2-custom-34-77824"))
+
+    def test_custom_family_cpu_and_memory_boundaries(self):
+        profile = self.c["profiles"]["gke-2cpu-4gb-amd64"]
+        for machine in ["e2-custom-4-12288", "e2-custom-32-16384", "n2d-custom-4-12288", "n2d-custom-96-49152"]:
+            with self.subTest(machine=machine):
+                ctl.validate_machine("test", profile, machine)
+        for machine in [
+            "e2-custom-34-77824",
+            "e2-custom-5-12288",
+            "n2d-custom-6-16384",
+            "n2d-custom-24-45056",
+            "n2d-custom-112-77824",
+            "e2-custom-4-12289",
+            "n2d-custom-4-12289",
+            "e2-custom-4-33024",
+            "n2d-custom-4-33024",
+            "n2d-custom-32-16128",
+        ]:
+            with self.subTest(machine=machine), self.assertRaises(ValueError):
+                ctl.validate_machine("test", profile, machine)
+
+    def test_custom_families_preserve_architecture_and_resource_checks(self):
+        for machine in ["e2-custom-4-12288", "n2d-custom-4-12288"]:
+            for override in [dict(architecture="arm64"), dict(cpu=4), dict(memory_gib=12)]:
+                with self.subTest(machine=machine, override=override), self.assertRaises(ValueError):
+                    ctl.validate_machine("test", {**self.c["profiles"]["gke-2cpu-4gb-amd64"], **override}, machine)
+
+    def test_spot_diversity_keeps_shared_budget_and_on_demand_fallback(self):
+        pools = ctl.node_pool_variants(self.c)
+        for name, profile in self.c["profiles"].items():
+            if profile["architecture"] != "amd64":
+                continue
+            spots = [p for p in pools.values() if p["profile_name"] == name and p["spot"]]
+            self.assertEqual(len(spots), 4)
+            self.assertGreaterEqual(len({p["machine_type"].split("-")[0] for p in spots}), 2)
+            self.assertEqual({p["zone"] for p in spots}, {f"us-central1-{z}" for z in "abcf"})
+            self.assertEqual(sum(p["max_runners"] for p in spots) + 8, profile["max_runners"])
+            self.assertFalse(pools[name + "-alt1"]["spot"])
 
     def test_unknown_setting_rejected(self):
         self.config_error(lambda c: c.update(min_runner=3))

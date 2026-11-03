@@ -56,18 +56,24 @@ def integer(value, low, high, label):
 
 def validate_machine(profile_name, p, machine_type):
     match = re.fullmatch(r"(e2|n2|n2d|t2a)-standard-(\d+)", machine_type)
-    custom = re.fullmatch(r"n2-custom-(\d+)-(\d+)", machine_type)
+    custom = re.fullmatch(r"(e2|n2|n2d)-custom-(\d+)-(\d+)", machine_type)
     require(
-        match is not None or custom is not None, "Supported machines: e2/n2/n2d/t2a-standard-N or n2-custom-CPU-MiB"
+        match is not None or custom is not None,
+        "Supported machines: e2/n2/n2d/t2a-standard-N or e2/n2/n2d-custom-CPU-MiB",
     )
-    family, cpus = (match[1], int(match[2])) if match else ("n2", int(custom[1]))
-    memory = cpus * 4 if match else int(custom[2]) / 1024
+    family, cpus = (match[1], int(match[2])) if match else (custom[1], int(custom[2]))
+    memory = cpus * 4 if match else int(custom[3]) / 1024
     if custom:
+        valid_cpus = {
+            "e2": 2 <= cpus <= 32 and cpus % 2 == 0,
+            "n2": (2 <= cpus <= 32 and cpus % 2 == 0) or (36 <= cpus <= 80 and cpus % 4 == 0),
+            "n2d": cpus in {2, 4, 8, 16, 32, 48, 64, 80, 96},
+        }
+        require(valid_cpus[family], f"Invalid {family.upper()} custom vCPU count")
         require(
-            (2 <= cpus <= 32 and cpus % 2 == 0) or (36 <= cpus <= 80 and cpus % 4 == 0),
-            "Invalid N2 custom vCPU count",
+            int(custom[3]) % 256 == 0 and cpus * 0.5 <= memory <= cpus * 8,
+            f"Invalid {family.upper()} custom memory",
         )
-        require(int(custom[2]) % 256 == 0 and cpus * 0.5 <= memory <= cpus * 8, "Invalid N2 custom memory")
     if family == "t2a":
         require(cpus in {1, 2, 4, 8, 16, 32, 48}, "Invalid T2A vCPU count")
     expected = "arm64" if family == "t2a" else "amd64"
