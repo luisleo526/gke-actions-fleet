@@ -243,6 +243,14 @@ profile 可設定 `targets: ["teamsync-protected", "pineforge-protected"]`，只
 
 工作使用 `runs-on: {group: gke-protected, labels: gkp-od-32cpu-64gb-amd64-128gb}`，只應配置於該 group 已授權的 release／deploy workflows。on-demand 避免 Spot 回收，仍受區域 quota、zone 庫存、維護及故障影響；兩個 zone 各有固定額度，不會自動借用另一個 pool 的上限。完整四種 profiles 與四個 targets 的離線驗證範例見 [test fixture](tests/fixtures/protected-on-demand.json)。
 
+## Preloading a digest-pinned image into dind
+
+Optional per-profile `preload_images` lets a release job use an immutable toolchain with `docker run --pull=never` in its pod's own dind daemon. A carrier image contains the Docker CLI and an OCI archive of the toolchain. The kubelet pulls the carrier using the node service account's registry credentials; nothing in the pod holds a registry credential.
+
+Each of up to four entries requires `image`, `carrier`, `archive`, `archive_sha256`, `targets`, and `workspace_variants_gib`, with `docker: true` on the profile. Both image references must use a SHA-256 digest without a tag. Select profile targets and explicit disk variants: the fixture selects only `pineforge-protected` and `[128]` on `gke-od-16cpu-32gb-amd64`, producing `gkp-od-16cpu-32gb-amd64-128gb`. Unsuffixed sets are excluded.
+
+A regular init container runs after the dind native sidecar's startup probe passes, using only the shared Docker socket. It verifies the archive's SHA-256, loads it, and checks that the loaded image ID equals the requested digest. This fails closed: if the archive hash or loaded digest is wrong, the init container fails, the runner container never starts and no job runs on that pod. ARC may already have created the runner's just-in-time registration before the pod started; that registration stays offline and the failed pod is replaced.
+
 ## 驗證
 
 ```sh

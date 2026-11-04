@@ -20,6 +20,16 @@ RUNNER_IMAGE = (
     "ghcr.io/actions/actions-runner:2.338.2@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232"
 )
 DOCKER_IMAGE = "docker:29.8.1-dind@sha256:3f3c01aaaebf7cce837356b688b7c059a4749f10bd7660dec7c58fc454a283f0"
+PRELOAD_SCRIPT = "\n".join(
+    [
+        "set -eu",
+        'echo "${PRELOAD_ARCHIVE_SHA256}  ${PRELOAD_ARCHIVE}" | sha256sum -c -',
+        'docker load -i "${PRELOAD_ARCHIVE}"',
+        'docker image inspect --format "preloaded id={{.Id}} platform={{.Os}}/{{.Architecture}} repodigests={{json .RepoDigests}}" "${PRELOAD_IMAGE}"',
+        'test "$(docker image inspect --format "{{.Id}}" "${PRELOAD_IMAGE}")" = "${PRELOAD_IMAGE#*@}"',
+        "docker images --digests --no-trunc",
+    ]
+)
 CHART_HASHES = {
     "gha-runner-scale-set": "233b3c53a7c5ebe91f24ca87736f4b76caf1ae2079482a1d036da828cbe247b1",
     "gha-runner-scale-set-controller": "248807b8ff55fd1a5cc7bb5250558092a162637cfb875ba041eddeeaa51cd747",
@@ -146,6 +156,52 @@ def validate_workspace_variants(variants):
     require(len(set(variants)) == len(variants), "Duplicate workspace variant")
 
 
+def validate_preload_images(c, p):
+    items = p["preload_images"]
+    require(isinstance(items, list) and 1 <= len(items) <= 4, "preload_images must contain 1..4 objects")
+    require(p["docker"] is True, "preload_images requires docker: true")
+    images = set()
+    for item in items:
+        keys(item, ["image", "carrier", "archive", "archive_sha256", "targets", "workspace_variants_gib"])
+        for field in ("image", "carrier"):
+            require(
+                isinstance(item[field], str)
+                and re.fullmatch(r"[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+@sha256:[0-9a-f]{64}", item[field]),
+                f"preload_images.{field} must use a digest-pinned registry reference without a tag",
+            )
+        archive = item["archive"]
+        require(
+            isinstance(archive, str) and re.fullmatch(r"/[A-Za-z0-9._/-]+", archive) and ".." not in archive.split("/"),
+            "preload_images.archive must be an absolute path without .. components",
+        )
+        require(
+            isinstance(item["archive_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", item["archive_sha256"]),
+            "preload_images.archive_sha256 must be 64 lowercase hex characters",
+        )
+        targets = item["targets"]
+        require(isinstance(targets, list) and targets, "preload_images.targets must be a non-empty list")
+        require(
+            all(isinstance(t, str) and t in p.get("targets", c["targets"]) for t in targets),
+            "preload_images.targets must belong to the profile's targets",
+        )
+        require(len(set(targets)) == len(targets), "Duplicate preload target")
+        variants = item["workspace_variants_gib"]
+        require(
+            isinstance(variants, list) and variants,
+            "preload_images.workspace_variants_gib must be a non-empty list",
+        )
+        require(
+            all(
+                type(size) is int and size in p.get("workspace_variants_gib", c.get("workspace_variants_gib", []))
+                for size in variants
+            ),
+            "preload_images.workspace_variants_gib must belong to the profile's explicit variants",
+        )
+        require(len(set(variants)) == len(variants), "Duplicate preload workspace variant")
+        require(item["image"] not in images, "Duplicate preload image")
+        images.add(item["image"])
+
+
 def load_config(path):
     c = json.loads(Path(path).read_text())
     keys(
@@ -187,7 +243,7 @@ def load_config(path):
         keys(
             p,
             ["architecture", "machine_type", "cpu", "memory_gib", "max_runners", "spot", "docker"],
-            ["alternatives", "allow_sudo", "workspace_gib", "workspace_variants_gib", "targets"],
+            ["alternatives", "allow_sudo", "workspace_gib", "workspace_variants_gib", "targets", "preload_images"],
         )
         if "targets" in p:
             targets = p["targets"]
@@ -202,6 +258,8 @@ def load_config(path):
             p.get("workspace_gib", c.get("workspace_gib", DEFAULT_WORKSPACE_GIB)), 10, 16384, "profile.workspace_gib"
         )
         validate_machine(profile_name, p, p["machine_type"])
+        if "preload_images" in p:
+            validate_preload_images(c, p)
         integer(p["max_runners"], 1, 100, "max_runners")
         alternatives = p.get("alternatives", [])
         require(isinstance(alternatives, list), "alternatives must be a list")
@@ -455,6 +513,33 @@ def scale_values(c, target_name, profile_name, variant_gib=None):
                 ],
             },
         ]
+        for i, item in enumerate(p.get("preload_images", [])):
+            if target_name not in item["targets"] or variant_gib not in item["workspace_variants_gib"]:
+                continue
+            spec["initContainers"].append(
+                {
+                    "name": f"preload-image-{i}",
+                    "image": item["carrier"],
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": ["/bin/sh", "-euc", PRELOAD_SCRIPT],
+                    "env": [
+                        {"name": "DOCKER_HOST", "value": "unix:///var/run/docker.sock"},
+                        {"name": "PRELOAD_IMAGE", "value": item["image"]},
+                        {"name": "PRELOAD_ARCHIVE", "value": item["archive"]},
+                        {"name": "PRELOAD_ARCHIVE_SHA256", "value": item["archive_sha256"]},
+                    ],
+                    "securityContext": {
+                        "runAsUser": 1001,
+                        "runAsGroup": 123,
+                        "runAsNonRoot": True,
+                        "allowPrivilegeEscalation": False,
+                        "readOnlyRootFilesystem": True,
+                        "capabilities": {"drop": ["ALL"]},
+                    },
+                    "resources": resources("500m", "256Mi", "1Gi"),
+                    "volumeMounts": [{"name": "dind-sock", "mountPath": "/var/run"}],
+                }
+            )
         spec["volumes"] += [
             {"name": "dind-sock", "emptyDir": {}},
             {"name": "dind-externals", "emptyDir": {"sizeLimit": "1Gi"}},

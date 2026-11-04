@@ -111,6 +111,20 @@
       "workspace_variants_gib": [
         128
       ],
+      "preload_images": [
+        {
+          "image": "us-central1-docker.pkg.dev/your-gcp-project/gke-runner-images/engine-toolchain-bookworm@sha256:72fb3f2a4d3409e6050b17530585992784a21a4955b368cb8f8b392981abc780",
+          "carrier": "us-central1-docker.pkg.dev/your-gcp-project/gke-runner-images/engine-toolchain-bookworm-carrier@sha256:c0641444206b379132d7b37a816e5c8ffecd9d9b64e9216ee2508040a413ee32",
+          "archive": "/preload/engine-toolchain-bookworm.oci.tar",
+          "archive_sha256": "7d262df220abf67f1f10b9090616530017869c0e14564468ffa56bb53c45297f",
+          "targets": [
+            "pineforge-protected"
+          ],
+          "workspace_variants_gib": [
+            128
+          ]
+        }
+      ],
       "alternatives": [
         {
           "machine_type": "n2d-custom-32-45056",
