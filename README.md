@@ -243,6 +243,10 @@ profile 可設定 `targets: ["teamsync-protected", "pineforge-protected"]`，只
 
 工作使用 `runs-on: {group: gke-protected, labels: gkp-od-32cpu-64gb-amd64-128gb}`，只應配置於該 group 已授權的 release／deploy workflows。on-demand 避免 Spot 回收，仍受區域 quota、zone 庫存、維護及故障影響；兩個 zone 各有固定額度，不會自動借用另一個 pool 的上限。完整四種 profiles 與四個 targets 的離線驗證範例見 [test fixture](tests/fixtures/protected-on-demand.json)。
 
+### 32 CPU unprotected on-demand profile
+
+Keep `gke-od-32cpu-64gb-amd64` restricted to its protected targets. For `pineforge`, add a separate `gke-ondemand-32cpu-64gb-amd64` profile with only `targets: ["pineforge"]`, AMD64 32 vCPU/64 GiB, `spot: false`, Docker enabled, `max_runners: 12` split 6+6, and the existing `n2d-custom-48-77824` machine in the configured zone plus a six-node `us-central1-b` alternative, also on-demand. Leave `workspace_gib` unset so the base label inherits the global workspace size, as the Spot 32-CPU profile does, and set `workspace_variants_gib: [256]`; this produces `gke-ondemand-32cpu-64gb-amd64` and `gke-ondemand-32cpu-64gb-amd64-256gb` in `arc-pineforge` under `gke-runners`. Its node pools are `gke-ondemand-32cpu-64gb-amd64` and `gke-ondemand-32cpu-64gb-amd64-alt1`; peak capacity is 12 × 48 = 576 on-demand N2D vCPU, so verify regional quota before apply. Keep protected on-demand profiles, Spot profiles, and every other target assignment unchanged; edit `config.json`, review the render, then run `make install`.
+
 ## Preloading a digest-pinned image into dind
 
 Optional per-profile `preload_images` lets a release job use an immutable toolchain with `docker run --pull=never` in its pod's own dind daemon. A carrier image contains the Docker CLI and an OCI archive of the toolchain. The kubelet pulls the carrier using the node service account's registry credentials; nothing in the pod holds a registry credential.
