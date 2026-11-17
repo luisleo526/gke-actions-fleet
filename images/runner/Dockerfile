@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Optional migration image. Build and publish a multi-platform manifest, then set
 # config.runner_image to its digest. The infrastructure works with the stock image.
-FROM ghcr.io/actions/actions-runner:2.338.2@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232
+FROM ghcr.io/actions/actions-runner:2.338.2@sha256:6d0b2d80d80f143f77dcb676e50920100bbb547e39e883454d57f45ab8c31300
 USER root
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build clang lld ccache pkg-config shellcheck \
